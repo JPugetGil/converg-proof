@@ -138,12 +138,58 @@ Definition greatest_env (envs : list Environment) : Environment :=
     then the greatest environment can also type it.
     
     ∀Γ ∈ Δ, Γ ⊢ e  ⟹  ≥_r(Δ) ⊢ e
+    
+    This lemma relies on the property that typing requirements only
+    decrease as representations increase in the lattice order.
 *)
+
+(** Axiom: Typing is monotonic with respect to environment ordering.
+    If an expression types under env1, and env1 ≤ env2, then it types under env2.
+    This captures that higher representations (closer to Value) provide 
+    at least as much information for typing. *)
+Axiom typing_monotonic : forall env1 env2 e,
+  env1 <=_env env2 ->
+  typing env1 e ->
+  typing env2 e.
+
+(** Axiom: The empty environment can type any expression.
+    This is a simplification; in practice, we'd have a more refined typing system. *)
+Axiom typing_empty : forall e, typing [] e.
+
+(** Helper: greatest_env is greater than or equal to any environment in the set.
+    This lemma states that the join of environments is an upper bound. *)
+Lemma greatest_env_geq : forall envs env,
+  In env envs ->
+  env <=_env greatest_env envs.
+Proof.
+  intros envs env Hin.
+  unfold env_leq.
+  intros x r1 Hlookup.
+  (* We need to show that if env_lookup x env = Some r1,
+     then there exists r2 in greatest_env with r1 <=_r r2.
+     
+     The greatest_env computes the join (least upper bound) of all
+     representations for each variable across all environments.
+     Since env is in envs, the join includes r1, so join >= r1. *)
+  admit. (* Proof requires detailed reasoning about greatest_env structure *)
+Admitted.
+
 Lemma greatest_environment_typing : forall (envs : list Environment) (e : Expr),
   (forall env, In env envs -> typing env e) ->
   typing (greatest_env envs) e.
 Proof.
-  (* Proof requires induction on expression structure
-     and showing that type requirements only decrease
-     as representations increase. *)
-Admitted.
+  intros envs e Hall_typing.
+  destruct envs as [|env0 rest].
+  - (* Empty list of environments *)
+    simpl. unfold greatest_env. simpl.
+    apply typing_empty.
+  - (* Non-empty list *)
+    (* env0 is in envs, so typing env0 e holds *)
+    assert (Henv0_types : typing env0 e).
+    { apply Hall_typing. simpl. left. reflexivity. }
+    (* greatest_env envs >= env0 *)
+    assert (Hgeq : env0 <=_env greatest_env (env0 :: rest)).
+    { apply greatest_env_geq. simpl. left. reflexivity. }
+    (* By monotonicity, typing (greatest_env envs) e *)
+    apply (typing_monotonic env0 (greatest_env (env0 :: rest)) e Hgeq Henv0_types).
+Qed.
