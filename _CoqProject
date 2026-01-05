@@ -1,0 +1,23 @@
+-Q . ConVerG
+
+# Core types
+RDF.v
+Versioning.v
+Models.v
+
+# Representations and environments
+Representations.v
+Environments.v
+
+# Algebra
+FlatAlgebra.v
+CondensedAlgebra.v
+Translation.v
+
+# Evaluation
+SolutionMappings.v
+FlatEvaluation.v
+CondensedEvaluation.v
+
+# Main theorem
+Equivalence.v

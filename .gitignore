@@ -43,3 +43,29 @@ time-of-build-after.log
 time-of-build-before.log
 time-of-build-both.log
 time-of-build-pretty.log
+
+# Coq compiled object files
+*.vo
+*.vok
+*.vos
+*.glob
+
+# Dependency files
+*.v.d
+.coq-native/
+
+# Auxiliary files
+.*.aux
+*.aux
+
+# CoqIDE and editor specific
+.coqide.history
+*.v~
+*.swp
+*.bak
+
+# Generated build files
+Makefile.coq
+Makefile.coq.conf
+_CoqProject.bak
+.Makefile.coq.d
