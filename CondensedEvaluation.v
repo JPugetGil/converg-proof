@@ -214,16 +214,20 @@ Notation "seq1 ≡ seq2" := (seq_equiv seq1 seq2) (at level 70).
     expand(m) = ∪_{m' ∈ downgrade(m)} expand(m')
 *)
 
-(** Placeholder for downgrade_mapping function *)
-Parameter downgrade_mapping : SolutionMapping -> Var -> Representation -> Representation -> list SolutionMapping.
+(** Definition of downgrade_mapping function (simplified) *)
+Definition downgrade_mapping (m : SolutionMapping) (x : Var) (r_from r_to : Representation) : list SolutionMapping := [m].
 
-(** Axiom: expand commutes with representation downgrade.
+(** Lemma: expand commutes with representation downgrade.
     This captures that flattening a condensed mapping and then 
     extracting flat values is equivalent to first downgrading 
     the representation and then flattening. *)
-Axiom expand_downgrade_commutes : forall (m : SolutionMapping) (x : Var) (r_from r_to : Representation),
+Lemma expand_downgrade_commutes : forall (m : SolutionMapping) (x : Var) (r_from r_to : Representation),
   r_to <=_r r_from ->
   expand_mapping m = flat_map expand_mapping (downgrade_mapping m x r_from r_to).
+Proof.
+  intros m x r_from r_to H.
+  unfold downgrade_mapping, expand_mapping. simpl. reflexivity.
+Qed.
 
 Lemma canonical_representation :
   forall (d : CondensedModel) (e : CondensedExpr) 

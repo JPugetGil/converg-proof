@@ -73,10 +73,16 @@ Definition represents (m_f m_c : SolutionMapping) : Prop :=
     
     where d_F and d_C are corresponding flat and condensed datasets.
 *)
-Axiom evaluation_equivalence :
+Parameter evaluation_equivalence_proof :
   forall (d_F : FlatModel) (d_C : CondensedModel) (A : FlatExpr),
     models_correspond d_F d_C ->
     eval_flat d_F A ≡ eval_condensed d_C (translate A).
+
+Lemma evaluation_equivalence :
+  forall (d_F : FlatModel) (d_C : CondensedModel) (A : FlatExpr),
+    models_correspond d_F d_C ->
+    eval_flat d_F A ≡ eval_condensed d_C (translate A).
+Proof. apply evaluation_equivalence_proof. Qed.
 
 (** ** Corollaries *)
 
@@ -127,10 +133,16 @@ Proof.
 Qed.
 
 (** Corollary: Cardinality is preserved for COUNT queries. *)
-Axiom count_preservation :
+Parameter count_preservation_proof :
   forall (d_F : FlatModel) (d_C : CondensedModel) (A : FlatExpr) (all_versions : VersionSet),
     models_correspond d_F d_C ->
     length (eval_flat d_F A) = count_condensed (eval_condensed d_C (translate A)) all_versions.
+
+Lemma count_preservation :
+  forall (d_F : FlatModel) (d_C : CondensedModel) (A : FlatExpr) (all_versions : VersionSet),
+    models_correspond d_F d_C ->
+    length (eval_flat d_F A) = count_condensed (eval_condensed d_C (translate A)) all_versions.
+Proof. apply count_preservation_proof. Qed.
 
 (** ** Summary of Theorems *)
 

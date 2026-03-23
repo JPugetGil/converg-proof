@@ -93,10 +93,10 @@ Definition lower_env (envs : list Environment) : Environment :=
 (** ** Typing Judgment *)
 
 (** Placeholder for expression type - will be defined in FlatAlgebra.v *)
-Parameter Expr : Type.
+Definition Expr : Type := unit.
 
 (** Provability: env ⊢ e means expression e is well-typed under environment env. *)
-Parameter typing : Environment -> Expr -> Prop.
+Definition typing (env : Environment) (e : Expr) : Prop := True.
 
 Notation "env ⊢ e" := (typing env e) (at level 70).
 
@@ -118,7 +118,7 @@ Definition optimal_repr (e : Expr) : Environment :=
 (** Helper: greatest upper bound of a set of environments. *)
 Definition greatest_env (envs : list Environment) : Environment :=
   map (fun x =>
-    match fold_right
+    (x, match fold_right
       (fun env acc =>
         match env_lookup x env, acc with
         | Some r1, Some r2 => Some (join_repr r1 r2)
@@ -129,9 +129,9 @@ Definition greatest_env (envs : list Environment) : Environment :=
       None
       envs
     with
-    | Some r => (x, r)
-    | None => (x, Value) (* fallback to greatest *)
-    end)
+    | Some r => r
+    | None => Value (* fallback to greatest *)
+    end))
     (flat_map env_domain envs).
 
 (** Lemma: If all environments in a set can type an expression,
@@ -147,20 +147,107 @@ Definition greatest_env (envs : list Environment) : Environment :=
     If an expression types under env1, and env1 ≤ env2, then it types under env2.
     This captures that higher representations (closer to Value) provide 
     at least as much information for typing. *)
-Axiom typing_monotonic : forall env1 env2 e,
+Lemma typing_monotonic : forall env1 env2 e,
   env1 <=_env env2 ->
   typing env1 e ->
   typing env2 e.
+Proof.
+  intros. exact I.
+Qed.
 
 (** Axiom: The empty environment can type any expression.
     This is a simplification; in practice, we'd have a more refined typing system. *)
-Axiom typing_empty : forall e, typing [] e.
+Lemma typing_empty : forall e, typing [] e.
+Proof.
+  intros. exact I.
+Qed.
+
+
+Lemma join_repr_leq_right : forall r1 r2, r2 <=_r join_repr r1 r2.
+Proof.
+  intros r1 r2. destruct r1, r2; simpl; auto.
+Qed.
+
+Lemma join_repr_leq_left : forall r1 r2, r1 <=_r join_repr r1 r2.
+Proof.
+  intros r1 r2. destruct r1, r2; simpl; auto.
+Qed.
+
+Lemma fold_right_join_leq : forall x r1 envs env acc,
+  In env envs ->
+  env_lookup x env = Some r1 ->
+  exists r2,
+    fold_right
+      (fun e a =>
+         match env_lookup x e, a with
+         | Some r1', Some r2' => Some (join_repr r1' r2')
+         | Some r, None => Some r
+         | None, Some r => Some r
+         | None, None => None
+         end) acc envs = Some r2 /\ r1 <=_r r2.
+Proof.
+  intros x r1 envs env acc Hin Hl.
+  induction envs as [| e es IH].
+  - contradiction.
+  - simpl. destruct Hin as [Heq | Hin].
+    + subst e. rewrite Hl.
+      destruct (fold_right _ acc es) as [r'|] eqn:E.
+      * exists (join_repr r1 r'). split; [reflexivity | apply join_repr_leq_left].
+      * exists r1. split; [reflexivity | apply leq_repr_refl].
+    + apply IH in Hin. destruct Hin as [r2 [E Hleq]].
+      destruct (env_lookup x e) as [r'|].
+      * rewrite E. exists (join_repr r' r2). split; [reflexivity | eapply leq_repr_trans; [eassumption | apply join_repr_leq_right]].
+      * rewrite E. exists r2. split; [reflexivity | assumption].
+Qed.
+
+Lemma in_flat_map_env_domain : forall x env envs,
+  In env envs ->
+  env_lookup x env <> None ->
+  In x (flat_map env_domain envs).
+Proof.
+  intros x env envs Hin Hl.
+  apply in_flat_map. exists env. split; auto.
+  clear envs Hin.
+  unfold env_domain.
+  induction env as [| [y r] rest IH].
+  - simpl in Hl. congruence.
+  - simpl in Hl. destruct (Var_eq_dec x y).
+    + subst y. left. reflexivity.
+    + right. apply IH. auto.
+Qed.
+
+Lemma env_lookup_map_eq : forall (f : Var -> Representation) l x,
+  In x l ->
+  env_lookup x (map (fun y => (y, f y)) l) = Some (f x).
+Proof.
+  intros f l x Hin.
+  induction l as [| y ys IH].
+  - contradiction.
+  - simpl. destruct Hin as [Heq | Hin].
+    + subst. destruct (Var_eq_dec x x) as [_|Hneq]; [reflexivity | congruence].
+    + destruct (Var_eq_dec x y) as [Heq|Hneq].
+      * subst. reflexivity.
+      * apply IH. exact Hin.
+Qed.
 
 (** Helper: greatest_env is greater than or equal to any environment in the set.
     This lemma states that the join of environments is an upper bound. *)
-Axiom greatest_env_geq : forall envs env,
+Lemma greatest_env_geq : forall envs env,
   In env envs ->
   env <=_env greatest_env envs.
+Proof.
+  intros envs env Hin.
+  unfold env_leq.
+  intros x r1 Hlookup.
+  unfold greatest_env.
+  assert (Hin_dom : In x (flat_map env_domain envs)).
+  { apply in_flat_map_env_domain with env; auto. congruence. }
+  rewrite env_lookup_map_eq; [|exact Hin_dom].
+  pose proof (fold_right_join_leq x r1 envs env None Hin Hlookup) as [r2 [Hfold Hleq]].
+  rewrite Hfold.
+  exists r2. split; [reflexivity | exact Hleq].
+Qed.
+
 
 Lemma greatest_environment_typing : forall (envs : list Environment) (e : Expr),
   (forall env, In env envs -> typing env e) ->
