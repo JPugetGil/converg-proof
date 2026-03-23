@@ -46,17 +46,15 @@ Definition is_permutation {A : Type} (eq_dec : forall x y : A, {x = y} + {x <> y
   (forall x, count_occ eq_dec l1 x = count_occ eq_dec l2 x).
 
 (** Solution mapping equality decision (simplified). *)
-Parameter SolutionMapping_eq_dec : 
-  forall m1 m2 : SolutionMapping, {m1 = m2} + {m1 <> m2}.
 
 (** Sequence equivalence definition. *)
 Definition seq_equiv (seq_f : SolutionSequence) (seq_c : CondensedSolutionSequence) : Prop :=
-  is_permutation SolutionMapping_eq_dec seq_f (expand_sequence seq_c).
+  is_permutation CondensedEvaluation.SolutionMapping_eq_dec seq_f (expand_sequence seq_c).
 
-Notation "seq1 ≡ seq2" := (seq_equiv seq1 seq2) (at level 70).
+(* Notation "seq1 ≡ seq2" := (seq_equiv seq1 seq2) (at level 70). - Already defined in CondensedEvaluation.v *)
 
 (** ** Represents Relation *)
-
+ 
 (** A flat mapping represents a condensed mapping if it's in its expansion.
     m_F ∈ expand(m_C)
 *)
@@ -106,7 +104,7 @@ Proof.
        Being in expand means there exists m_C such that m_F ∈ expand_mapping m_C. *)
     unfold represents, expand_sequence.
     (* m_F appears in flat, so it appears in expand_sequence of condensed *)
-    assert (Hcount : count_occ SolutionMapping_eq_dec (eval_flat d_F A) m_F > 0).
+    assert (Hcount : count_occ CondensedEvaluation.SolutionMapping_eq_dec (eval_flat d_F A) m_F > 0).
     { apply count_occ_In. exact Hin_flat. }
     rewrite Hequiv in Hcount.
     apply count_occ_In in Hcount.
@@ -121,7 +119,7 @@ Proof.
     (* m_C is in condensed result, m_F is in expand(m_C).
        So m_F is in expand_sequence(condensed result).
        By Hequiv, count is same as in flat, so m_F is in flat. *)
-    assert (Hcount : count_occ SolutionMapping_eq_dec 
+    assert (Hcount : count_occ CondensedEvaluation.SolutionMapping_eq_dec 
                        (expand_sequence (eval_condensed d_C (translate A))) m_F > 0).
     { apply count_occ_In.
       unfold expand_sequence.
