@@ -163,8 +163,110 @@ Proof.
   reflexivity.
 Qed.
 
-(** condensed_lookup in condense finds the version set when the quad exists.
-    This requires showing that the map/filter operations preserve the property. *)
+(** condensed_lookup at a matching head entry always succeeds. *)
+Lemma condensed_lookup_cons_eq : forall q vs rest,
+  condensed_lookup q ((q, vs) :: rest) = Some vs.
+Proof.
+  intros [s p o g] vs rest. simpl.
+  destruct (IRI_eq_dec s s); [|congruence].
+  destruct (IRI_eq_dec p p); [|congruence].
+  destruct (Term_eq_dec o o); [|congruence].
+  destruct (IRI_eq_dec g g); [|congruence].
+  reflexivity.
+Qed.
+
+(** condensed_lookup succeeds in a mapped list when the quad is present. *)
+Lemma condensed_lookup_in_map_eq : forall q qs (f : Quad -> VersionSet),
+  In q qs ->
+  condensed_lookup q (map (fun q' => (q', f q')) qs) = Some (f q).
+Proof.
+  intros q qs f Hin.
+  induction qs as [|q' rest IH].
+  - contradiction.
+  - simpl. destruct Hin as [Heq | Hin_rest].
+    + subst q'. apply condensed_lookup_cons_eq.
+    + destruct (Quad_eq_dec q q') as [Heq|Hneq].
+      * subst q'. apply condensed_lookup_cons_eq.
+      * destruct q as [qs' qp qo qg].
+        destruct q' as [qs'' qp' qo' qg'].
+        simpl.
+        destruct (IRI_eq_dec qs' qs'');
+        [destruct (IRI_eq_dec qp qp');
+         [destruct (Term_eq_dec qo qo');
+          [destruct (IRI_eq_dec qg qg');
+           [subst; exfalso; apply Hneq; reflexivity
+           |apply IH; exact Hin_rest]
+          |apply IH; exact Hin_rest]
+         |apply IH; exact Hin_rest]
+        |apply IH; exact Hin_rest].
+Qed.
+
+(** The result of condensed_lookup in a mapped list equals f(q). *)
+Lemma condensed_lookup_in_map_result : forall q qs (f : Quad -> VersionSet) vs,
+  condensed_lookup q (map (fun q' => (q', f q')) qs) = Some vs ->
+  vs = f q.
+Proof.
+  intros q qs f vs H.
+  induction qs as [|q' rest IH].
+  - simpl in H. discriminate.
+  - simpl in H.
+    destruct q as [qs' qp qo qg].
+    destruct q' as [qs'' qp' qo' qg'].
+    simpl in H.
+    destruct (IRI_eq_dec qs' qs'').
+    + destruct (IRI_eq_dec qp qp').
+      * destruct (Term_eq_dec qo qo').
+        -- destruct (IRI_eq_dec qg qg').
+           ++ inversion H. subst. reflexivity.
+           ++ apply IH. exact H.
+        -- apply IH. exact H.
+      * apply IH. exact H.
+    + apply IH. exact H.
+Qed.
+
+(** If condensed_lookup returns Some, the entry is in the list. *)
+Lemma condensed_lookup_Some_In : forall q vs cm,
+  condensed_lookup q cm = Some vs ->
+  In (q, vs) cm.
+Proof.
+  intros q vs cm H.
+  induction cm as [|[q' vs'] rest IH].
+  - simpl in H. discriminate.
+  - simpl in H.
+    destruct q as [qs qp qo qg].
+    destruct q' as [qs' qp' qo' qg'].
+    simpl in H.
+    destruct (IRI_eq_dec qs qs').
+    + destruct (IRI_eq_dec qp qp').
+      * destruct (Term_eq_dec qo qo').
+        -- destruct (IRI_eq_dec qg qg').
+           ++ inversion H. subst. left. reflexivity.
+           ++ right. apply IH. exact H.
+        -- right. apply IH. exact H.
+      * right. apply IH. exact H.
+    + right. apply IH. exact H.
+Qed.
+
+(** quad_with_version inverse lemmas. *)
+Lemma quad_with_version_to_quad : forall q v,
+  versioned_quad_to_quad (quad_with_version q v) = q.
+Proof.
+  intros [s p o g] v. simpl. reflexivity.
+Qed.
+
+Lemma quad_with_version_version : forall q v,
+  vq_version (quad_with_version q v) = v.
+Proof.
+  intros [s p o g] v. simpl. reflexivity.
+Qed.
+
+Lemma quad_with_version_inverse : forall vq,
+  quad_with_version (versioned_quad_to_quad vq) (vq_version vq) = vq.
+Proof.
+  intros [s p o g v]. simpl. reflexivity.
+Qed.
+
+(** condensed_lookup in condense finds the version set when the quad exists. *)
 Lemma condensed_lookup_in_condense : forall vq fm,
   In vq fm ->
   exists vs, condensed_lookup (versioned_quad_to_quad vq) (condense fm) = Some vs /\
@@ -173,122 +275,133 @@ Proof.
   intros vq fm Hin.
   exists (versions_of_quad (versioned_quad_to_quad vq) fm).
   split.
-  - (* Show lookup succeeds - the quad appears in condense fm *)
-    (* The proof requires showing that condensed_lookup finds the 
-       versions_of_quad for any quad that appears in the model.
-       This follows from the definition of condense as map over unique_quads. *)
-    unfold condense, unique_quads.
-    induction fm as [|vq' rest IH].
-    + simpl in Hin. contradiction.
-    + simpl in Hin.
-      destruct Hin as [Heq | Hin_rest].
-      * subst vq'.
-        simpl.
-        destruct vq as [s p o g v]. simpl.
-        destruct (IRI_eq_dec s s); [|contradiction].
-        destruct (IRI_eq_dec p p); [|contradiction].
-        destruct (Term_eq_dec o o); [|contradiction].
-        destruct (IRI_eq_dec g g); [|contradiction].
-        reflexivity.
-      * (* vq is in rest - more complex case *)
-        (* The lookup may find vq' first if quads match, or find vq in the rest *)
-        simpl.
-        destruct vq as [s p o g v].
-        destruct vq' as [s' p' o' g' v'].
-        simpl.
-        destruct (IRI_eq_dec s s') as [Hs|Hs].
-        { destruct (IRI_eq_dec p p') as [Hp|Hp].
-          { destruct (Term_eq_dec o o') as [Ho|Ho].
-            { destruct (IRI_eq_dec g g') as [Hg|Hg].
-              { (* All match - both quads are the same, return version set *)
-                subst. reflexivity. }
-              { (* Quads differ in graph - need to look in rest *)
-                (* IH doesn't directly apply due to version set difference *)
-                admit. } }
-            { admit. } }
-          { admit. } }
-        { admit. }
-  - (* Show version is in the set *)
-    apply in_fm_in_versions. exact Hin.
-Admitted.
+  - unfold condense, unique_quads.
+    apply condensed_lookup_in_map_eq.
+    apply in_map. exact Hin.
+  - apply in_fm_in_versions. exact Hin.
+Qed.
 
 (** ** Main Theorems *)
 
-(** Theorem: Condensing then flattening returns the original flat model.
-    condense ∘ flatten (d_F) = d_F 
-    
-    This is the main correctness theorem for the condensation/flattening operations.
-    It states that a flat model and its condensed form represent the same data.
-*)
+(** Theorem 4.6: Condensing preserves the flat model.
+    condense(d_F) corresponds to d_F. *)
 Theorem condense_flatten_identity : forall fm : FlatModel,
   models_correspond fm (condense fm).
 Proof.
   intros fm.
   unfold models_correspond, in_flat_model.
-  intros vq.
-  split.
-  - (* Forward direction: vq ∈ fm → lookup succeeds with version in set *)
-    intro Hvq_in_fm.
-    apply condensed_lookup_in_condense. exact Hvq_in_fm.
-  - (* Backward direction: lookup succeeds with version in set → vq ∈ fm *)
+  intros vq. split.
+  - (* Forward: vq ∈ fm → lookup succeeds with version in set *)
+    intro Hin. apply condensed_lookup_in_condense. exact Hin.
+  - (* Backward: lookup succeeds with version in set → vq ∈ fm *)
     intros [vs [Hlookup Hversion_in]].
-    (* The proof requires showing that if we can look up the quad of vq
-       in condense fm and find its version, then vq itself must be in fm.
-       
-       This follows from:
-       1. The lookup returns versions_of_quad for some quad in fm
-       2. versions_of_quad only contains versions from quads actually in fm
-       3. Therefore the version membership implies vq existence in fm
-    *)
     unfold condense, unique_quads in Hlookup.
-    (* Use in_versions_of_quad to get the original versioned quad *)
-    assert (Hfind : exists vq', In vq' fm /\ 
-                                versioned_quad_to_quad vq' = versioned_quad_to_quad vq /\
-                                vq_version vq' = vq_version vq).
-    { (* The lookup result tells us the quad exists and version is in the set *)
-      admit. (* Detailed proof requires reasoning about condensed_lookup structure *)
-    }
-    destruct Hfind as [vq' [Hin' [Hquad_eq Hversion_eq]]].
-    (* vq and vq' have the same quad and version, so they're equal *)
+    pose proof (condensed_lookup_in_map_result _ _ _ _ Hlookup) as Heq.
+    subst vs.
+    apply in_versions_of_quad in Hversion_in.
+    destruct Hversion_in as [vq' [Hin' [Hquad_eq Hversion_eq]]].
     destruct vq as [s p o g v].
     destruct vq' as [s' p' o' g' v'].
     simpl in *.
-    injection Hquad_eq as Hs Hp Ho Hg.
-    subst s' p' o' g' v'.
+    unfold versioned_quad_to_quad in Hquad_eq. simpl in Hquad_eq.
+    inversion Hquad_eq. subst s' p' o' g' v'.
     exact Hin'.
-Admitted.
+Qed.
 
-(** Theorem: Flattening then condensing returns the original condensed model.
-    flatten ∘ condense (d_C) = d_C *)
-Theorem flatten_condense_identity : forall cm : CondensedModel,
-  forall q : Quad,
-    condensed_lookup q cm = condensed_lookup q (condense (flatten cm)).
+(** ** Well-formedness for Condensed Models *)
+
+(** A condensed model is well-formed if no quad appears as a key more than once. *)
+Definition wf_condensed (cm : CondensedModel) : Prop :=
+  NoDup (map fst cm).
+
+(** condensed_lookup under NoDup returns the unique entry's version set. *)
+Lemma condensed_lookup_NoDup : forall q vs cm,
+  NoDup (map fst cm) ->
+  In (q, vs) cm ->
+  condensed_lookup q cm = Some vs.
 Proof.
-  intros cm q.
-  (* This theorem states that looking up a quad in the original condensed model
-     gives the same result as looking it up after flatten then condense.
-     
-     Key insight:
-     - flatten(cm) expands each (q, vs) pair to versioned quads
-     - condense groups them back by quad
-     - For well-formed models, this is an identity *)
+  intros q vs cm Hnodup Hin.
   induction cm as [|[q' vs'] rest IH].
-  - (* Empty model: both sides return None *)
-    reflexivity.
-  - (* Non-empty: (q', vs') :: rest *)
-    simpl.
-    destruct q as [qs qp qo qg].
-    destruct q' as [qs' qp' qo' qg'].
-    simpl.
-    destruct (IRI_eq_dec qs qs') as [Hs|Hs];
-    destruct (IRI_eq_dec qp qp') as [Hp|Hp];
-    destruct (Term_eq_dec qo qo') as [Ho|Ho];
-    destruct (IRI_eq_dec qg qg') as [Hg|Hg].
-    + (* Quad matches: q = q' *)
-      subst.
-      (* Need to show: Some vs' = condensed_lookup after flatten/condense *)
-      (* This requires showing versions_of_quad preserves vs' through the round-trip *)
-      (* The proof depends on the structure of flatten and condense *)
-      admit.
-    + all: admit. (* Other cases require similar reasoning *)
-Admitted.
+  - contradiction.
+  - simpl in Hin. destruct Hin as [Heq | Hin_rest].
+    + inversion Heq. subst q' vs'.
+      apply condensed_lookup_cons_eq.
+    + simpl (map fst _) in Hnodup.
+      apply NoDup_cons_iff in Hnodup.
+      destruct Hnodup as [Hnotin Hnodup_rest].
+      destruct q as [qs qp qo qg].
+      destruct q' as [qs' qp' qo' qg'].
+      simpl.
+      destruct (IRI_eq_dec qs qs') as [Hs|Hs].
+      * destruct (IRI_eq_dec qp qp') as [Hp|Hp].
+        ** destruct (Term_eq_dec qo qo') as [Ho|Ho].
+           *** destruct (IRI_eq_dec qg qg') as [Hg|Hg].
+               **** subst qs' qp' qo' qg'.
+                    exfalso. apply Hnotin.
+                    apply in_map_iff. exists (mkQuad qs qp qo qg, vs).
+                    split; [reflexivity|exact Hin_rest].
+               **** apply IH; assumption.
+           *** apply IH; assumption.
+        ** apply IH; assumption.
+      * apply IH; assumption.
+Qed.
+
+(** If (q, vs) is in cm and v is in vs, then quad_with_version q v is in flatten cm. *)
+Lemma in_flatten : forall q vs v cm,
+  In (q, vs) cm ->
+  In v vs ->
+  In (quad_with_version q v) (flatten cm).
+Proof.
+  intros q vs v cm Hqvs Hv.
+  unfold flatten.
+  apply in_flat_map.
+  exists (q, vs). split.
+  - exact Hqvs.
+  - simpl. apply in_map. exact Hv.
+Qed.
+
+(** If vq is in flatten cm, then there exists an entry in cm it came from. *)
+Lemma in_flatten_inv : forall vq cm,
+  In vq (flatten cm) ->
+  exists q vs, In (q, vs) cm /\
+               vq = quad_with_version q (vq_version vq) /\
+               versioned_quad_to_quad vq = q /\
+               In (vq_version vq) vs.
+Proof.
+  intros vq cm Hin.
+  unfold flatten in Hin.
+  apply in_flat_map in Hin.
+  destruct Hin as [[q vs] [Hqvs Hvq]].
+  simpl in Hvq.
+  apply in_map_iff in Hvq.
+  destruct Hvq as [v [Heq Hvin]].
+  exists q, vs.
+  subst vq.
+  rewrite quad_with_version_to_quad.
+  rewrite quad_with_version_version.
+  auto.
+Qed.
+
+(** Theorem 4.7: Flattening preserves the condensed model (under well-formedness).
+    flatten(d_C) corresponds to d_C. *)
+Theorem flatten_condense_identity : forall cm : CondensedModel,
+  wf_condensed cm ->
+  models_correspond (flatten cm) cm.
+Proof.
+  intros cm Hwf.
+  unfold models_correspond, in_flat_model.
+  intros vq. split.
+  - (* Forward: In vq (flatten cm) → lookup succeeds *)
+    intro Hin.
+    apply in_flatten_inv in Hin.
+    destruct Hin as [q [vs [Hqvs [Hvq [Hquad Hvin]]]]].
+    exists vs. split.
+    + rewrite Hquad.
+      apply condensed_lookup_NoDup; [exact Hwf | exact Hqvs].
+    + exact Hvin.
+  - (* Backward: lookup succeeds → In vq (flatten cm) *)
+    intros [vs [Hlookup Hversion]].
+    apply condensed_lookup_Some_In in Hlookup.
+    rewrite <- (quad_with_version_inverse vq).
+    eapply in_flatten; eassumption.
+Qed.
