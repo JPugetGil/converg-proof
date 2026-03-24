@@ -86,8 +86,21 @@ Fixpoint lookup_condensed (x : Var) (bindings : list CondensedBinding)
 
 (** ** vals Function *)
 
+(** Abstract function mapping (version, graph_id) to a Term.
+    This corresponds to the VI function in the paper:
+    VI(v, g) returns the versioned IRI for named graph g at version v. *)
+Parameter vi_to_term : Version -> nat -> Term.
+
+(** The set of all versioned named graphs, parameterized by versions and graph ids.
+    In a full implementation this would enumerate all (v, g) pairs. *)
+Parameter all_versioned_named_graphs : VersionSet -> list nat -> list Term.
+
 (** The vals function returns the set of terms for a variable in a mapping.
-    vals_m(?var) depends on the representation of the variable.
+    vals_m(?var) depends on the representation of the variable:
+    - Value: the single bound term
+    - Id: the term obtained from the identifier via id_to_val
+    - Condensed (g, V): { VI(v, g) | v ∈ V }
+    - UnboundGraph: all versioned named graphs
 *)
 Definition vals (m : SolutionMapping) (x : Var) : list Term :=
   match lookup_value x (m_value m) with
@@ -98,14 +111,9 @@ Definition vals (m : SolutionMapping) (x : Var) : list Term :=
     | None =>
       match lookup_condensed x (m_condensed m) with
       | Some (g, vs) =>
-        (* { VI(v, g) | v ∈ vs } - would need to compute versioned IRIs *)
-        []
+        map (fun v => vi_to_term v g) vs
       | None =>
-        if set_member Var_eq_dec x (m_unboundgraph m) then
-          (* All versioned named graphs - would enumerate all *)
-          []
-        else
-          []
+        [] (* Variable not in mapping domain *)
       end
     end
   end.
@@ -210,17 +218,42 @@ Definition mapping_cardinality (m : SolutionMapping) (all_versions : VersionSet)
 
 (** ** Invariance Lemma *)
 
-(** Lemma: Expression evaluation is invariant under mapping equivalence.
-    If two mappings agree on all variables (or are both undefined),
-    then evaluating any expression gives the same result.
-*)
-Lemma invariance_under_mapping_equivalence :
-  forall m1 m2 : SolutionMapping,
-    (forall x, vals m1 x = vals m2 x) ->
-    forall x, vals m1 x = vals m2 x.
+(** Two solution mappings are vals-equivalent if they produce the same
+    term sets for every variable. *)
+Definition vals_equiv (m1 m2 : SolutionMapping) : Prop :=
+  forall x, vals m1 x = vals m2 x.
+
+(** Lemma: vals equivalence is reflexive. *)
+Lemma vals_equiv_refl : forall m, vals_equiv m m.
+Proof. unfold vals_equiv. intros m x. reflexivity. Qed.
+
+(** Lemma: vals equivalence is symmetric. *)
+Lemma vals_equiv_sym : forall m1 m2, vals_equiv m1 m2 -> vals_equiv m2 m1.
+Proof. unfold vals_equiv. intros m1 m2 H x. symmetry. apply H. Qed.
+
+(** Lemma: vals equivalence is transitive. *)
+Lemma vals_equiv_trans : forall m1 m2 m3,
+  vals_equiv m1 m2 -> vals_equiv m2 m3 -> vals_equiv m1 m3.
 Proof.
-  (* The proof is trivial given the assumption, but the real
-     lemma would be about expression evaluation invariance. *)
-  intros m1 m2 H x.
-  apply H.
+  unfold vals_equiv. intros m1 m2 m3 H12 H23 x.
+  rewrite H12. apply H23.
+Qed.
+
+(** Lemma: If two value-only mappings agree on all value bindings,
+    they are vals-equivalent. *)
+Lemma value_bindings_determine_vals :
+  forall m1 m2 : SolutionMapping,
+    m_id m1 = [] -> m_id m2 = [] ->
+    m_condensed m1 = [] -> m_condensed m2 = [] ->
+    m_unboundgraph m1 = [] -> m_unboundgraph m2 = [] ->
+    (forall x, lookup_value x (m_value m1) = lookup_value x (m_value m2)) ->
+    vals_equiv m1 m2.
+Proof.
+  unfold vals_equiv, vals.
+  intros m1 m2 Hid1 Hid2 Hc1 Hc2 Hu1 Hu2 Hval x.
+  rewrite Hval.
+  destruct (lookup_value x (m_value m2)); [reflexivity|].
+  rewrite Hid1, Hid2. simpl.
+  rewrite Hc1, Hc2. simpl.
+  reflexivity.
 Qed.

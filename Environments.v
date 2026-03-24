@@ -92,26 +92,39 @@ Definition lower_env (envs : list Environment) : Environment :=
 
 (** ** Typing Judgment *)
 
-(** Placeholder for expression type - will be defined in FlatAlgebra.v *)
-Definition Expr : Type := unit.
+(** Abstract expression type. Concrete instantiations are given by
+    FlatExpr (FlatAlgebra.v) and CondensedExpr (CondensedAlgebra.v). *)
+Parameter Expr : Type.
 
-(** Provability: env ⊢ e means expression e is well-typed under environment env. *)
-Definition typing (env : Environment) (e : Expr) : Prop := True.
+(** Abstract typing judgment: env ⊢ e means expression e is well-typed
+    under representation environment env. Concrete instantiations are
+    flat_expr_typing and condensed_expr_typing in the algebra modules. *)
+Parameter typing : Environment -> Expr -> Prop.
 
 Notation "env ⊢ e" := (typing env e) (at level 70).
+
+(** Axiom: Typing is monotonic with respect to environment ordering.
+    If an expression types under env1, and env1 ≤ env2, then it types under env2.
+    This captures the fundamental property that upgrading representations
+    (towards Value) preserves well-typedness, since higher representations
+    carry strictly more information. *)
+Axiom typing_monotonic : forall env1 env2 e,
+  env1 <=_env env2 ->
+  typing env1 e ->
+  typing env2 e.
 
 (** ** Optimal Representation *)
 
 (** The optimal representation function computes the environment where
     all variables are reduced to the lowest representation that still
     satisfies all typing constraints.
-    
+
     R*(e) = ⊓ { Γ | Γ ⊢ e }
 *)
-Definition optimal_repr (e : Expr) : Environment :=
-  (* This would require collecting all valid environments for e
-     and computing their meet. For now, axiomatized. *)
-  []. (* Placeholder *)
+Parameter optimal_repr : Expr -> Environment.
+
+(** Axiom: The optimal representation is valid for typing. *)
+Axiom optimal_repr_types : forall e, typing (optimal_repr e) e.
 
 (** ** Greatest Environment Typing Lemma *)
 
@@ -142,26 +155,6 @@ Definition greatest_env (envs : list Environment) : Environment :=
     This lemma relies on the property that typing requirements only
     decrease as representations increase in the lattice order.
 *)
-
-(** Axiom: Typing is monotonic with respect to environment ordering.
-    If an expression types under env1, and env1 ≤ env2, then it types under env2.
-    This captures that higher representations (closer to Value) provide 
-    at least as much information for typing. *)
-Lemma typing_monotonic : forall env1 env2 e,
-  env1 <=_env env2 ->
-  typing env1 e ->
-  typing env2 e.
-Proof.
-  intros. exact I.
-Qed.
-
-(** Axiom: The empty environment can type any expression.
-    This is a simplification; in practice, we'd have a more refined typing system. *)
-Lemma typing_empty : forall e, typing [] e.
-Proof.
-  intros. exact I.
-Qed.
-
 
 Lemma join_repr_leq_right : forall r1 r2, r2 <=_r join_repr r1 r2.
 Proof.
@@ -249,22 +242,28 @@ Proof.
 Qed.
 
 
+(** Theorem: If all environments in a non-empty set can type an expression,
+    then the greatest (join) environment can also type it.
+
+    ∀Γ ∈ Δ, Γ ⊢ e  ⟹  ≥_r(Δ) ⊢ e
+
+    Requires non-empty Δ because the base case (empty set) would need
+    typing under an empty environment, which does not hold in general.
+*)
 Lemma greatest_environment_typing : forall (envs : list Environment) (e : Expr),
+  envs <> [] ->
   (forall env, In env envs -> typing env e) ->
   typing (greatest_env envs) e.
 Proof.
-  intros envs e Hall_typing.
+  intros envs e Hne Hall_typing.
   destruct envs as [|env0 rest].
-  - (* Empty list of environments *)
-    simpl. unfold greatest_env. simpl.
-    apply typing_empty.
-  - (* Non-empty list *)
-    (* env0 is in envs, so typing env0 e holds *)
+  - contradiction.
+  - (* env0 is in envs, so typing env0 e holds *)
     assert (Henv0_types : typing env0 e).
     { apply Hall_typing. simpl. left. reflexivity. }
     (* greatest_env envs >= env0 *)
     assert (Hgeq : env0 <=_env greatest_env (env0 :: rest)).
     { apply greatest_env_geq. simpl. left. reflexivity. }
     (* By monotonicity, typing (greatest_env envs) e *)
-    apply (typing_monotonic env0 (greatest_env (env0 :: rest)) e Hgeq Henv0_types).
+    exact (typing_monotonic env0 (greatest_env (env0 :: rest)) e Hgeq Henv0_types).
 Qed.

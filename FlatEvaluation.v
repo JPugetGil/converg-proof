@@ -24,8 +24,15 @@ Definition SolutionSequence := list SolutionMapping.
 (** Effective Boolean Value (EBV) evaluation. *)
 Parameter ebv : Term -> bool.
 
-(** Placeholder for literal. *)
-Parameter dummy_literal : Literal.
+(** Boolean literal constants with proper axioms. *)
+Parameter true_literal : Literal.
+Parameter false_literal : Literal.
+Axiom true_false_distinct : true_literal <> false_literal.
+Axiom ebv_true : ebv (TermLit true_literal) = true.
+Axiom ebv_false : ebv (TermLit false_literal) = false.
+
+Definition bool_to_term (b : bool) : Term :=
+  if b then TermLit true_literal else TermLit false_literal.
 
 (** Evaluate a SPARQL expression to obtain a term.
     eval_E(e, m) evaluates expression e under mapping m.
@@ -39,40 +46,38 @@ Fixpoint eval_expr (e : SparqlExpr) (m : SolutionMapping) : option Term :=
       None
   | ExprEq e1 e2 =>
       match eval_expr e1 m, eval_expr e2 m with
-      | Some t1, Some t2 =>
-          if Term_eq_dec t1 t2 then Some (TermLit dummy_literal) (* true *)
-          else Some (TermLit dummy_literal) (* false *)
+      | Some t1, Some t2 => Some (bool_to_term (if Term_eq_dec t1 t2 then true else false))
       | _, _ => None
       end
   | ExprAnd e1 e2 =>
       match eval_expr e1 m, eval_expr e2 m with
-      | Some t1, Some t2 =>
-          if andb (ebv t1) (ebv t2) then Some (TermLit dummy_literal) (* true *)
-          else Some (TermLit dummy_literal) (* false *)
+      | Some t1, Some t2 => Some (bool_to_term (ebv t1 && ebv t2))
       | _, _ => None
       end
   | ExprOr e1 e2 =>
       match eval_expr e1 m, eval_expr e2 m with
-      | Some t1, Some t2 =>
-          if orb (ebv t1) (ebv t2) then Some (TermLit dummy_literal) (* true *)
-          else Some (TermLit dummy_literal) (* false *)
+      | Some t1, Some t2 => Some (bool_to_term (ebv t1 || ebv t2))
       | _, _ => None
       end
   | ExprNot e1 =>
       match eval_expr e1 m with
-      | Some t => 
-          if ebv t then Some (TermLit dummy_literal) (* false *)
-          else Some (TermLit dummy_literal) (* true *)
+      | Some t => Some (bool_to_term (negb (ebv t)))
       | None => None
       end
   | ExprNeq e1 e2 =>
       match eval_expr e1 m, eval_expr e2 m with
-      | Some t1, Some t2 =>
-          if Term_eq_dec t1 t2 then Some (TermLit dummy_literal) (* false *)
-          else Some (TermLit dummy_literal) (* true *)
+      | Some t1, Some t2 => Some (bool_to_term (if Term_eq_dec t1 t2 then false else true))
       | _, _ => None
       end
   end.
+
+(** Correctness of bool_to_term: ebv round-trips through bool_to_term. *)
+Lemma ebv_bool_to_term : forall b, ebv (bool_to_term b) = b.
+Proof.
+  destruct b; simpl.
+  - apply ebv_true.
+  - apply ebv_false.
+Qed.
 
 (** Check if expression evaluates to true under mapping. *)
 Definition expr_is_true (e : SparqlExpr) (m : SolutionMapping) : bool :=
