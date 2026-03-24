@@ -6,6 +6,7 @@
 
 From Stdlib Require Import List.
 From Stdlib Require Import Bool.
+From Stdlib Require Import Arith.PeanoNat.
 Require Import ConVerG.RDF.
 Require Import ConVerG.Versioning.
 Require Import ConVerG.Models.
@@ -175,6 +176,30 @@ Fixpoint eval_condensed (d : CondensedModel) (e : CondensedExpr) : CondensedSolu
 Definition count_condensed (seq : CondensedSolutionSequence) (all_versions : VersionSet) : nat :=
   fold_right (fun m acc => acc + mapping_cardinality m all_versions) 0 seq.
 
+(** ** Cross-Product Helpers *)
+
+(** Cartesian product of a list of choice lists.
+    Given [[a1;a2]; [b1;b2;b3]], produces all combinations:
+    [[a1;b1]; [a1;b2]; [a1;b3]; [a2;b1]; [a2;b2]; [a2;b3]] *)
+Fixpoint cross_product_bindings (choices : list (list ValueBinding))
+  : list (list ValueBinding) :=
+  match choices with
+  | [] => [[]]
+  | c :: rest =>
+    let rest_cp := cross_product_bindings rest in
+    flat_map (fun b => map (fun bs => b :: bs) rest_cp) c
+  end.
+
+(** Expand one condensed binding to possible value bindings. *)
+Definition expand_one_condensed (cb : CondensedBinding) : list ValueBinding :=
+  let '(x, (g, vs)) := cb in
+  map (fun v => (x, SolutionMappings.vi_to_term v g)) vs.
+
+(** Expand one unboundgraph variable to possible value bindings. *)
+Definition expand_one_unboundgraph (all_versions : VersionSet) (x : Var)
+  : list ValueBinding :=
+  map (fun v => (x, SolutionMappings.vi_to_term v 0)) all_versions.
+
 (** ** Expansion and Sequence Equivalence *)
 
 (** Expand a condensed solution mapping to all the flat mappings it represents.
@@ -184,21 +209,136 @@ Definition count_condensed (seq : CondensedSolutionSequence) (all_versions : Ver
     - Condensed (g, V): expanded to |V| mappings, one per version
     - UnboundGraph: expanded to all versioned named graphs
 
-    Parameterized by the global version set (needed for UnboundGraph expansion).
-    This is axiomatized because the full cross-product enumeration
-    requires the named graph set, which is a dataset-dependent parameter. *)
-Parameter expand_mapping : VersionSet -> SolutionMapping -> list SolutionMapping.
+    Parameterized by the global version set (needed for UnboundGraph expansion). *)
+Definition expand_mapping (all_versions : VersionSet) (m : SolutionMapping)
+  : list SolutionMapping :=
+  let condensed_choices := map expand_one_condensed (m_condensed m) in
+  let unboundgraph_choices := map (expand_one_unboundgraph all_versions) (m_unboundgraph m) in
+  let all_choices := condensed_choices ++ unboundgraph_choices in
+  let combinations := cross_product_bindings all_choices in
+  map (fun chosen =>
+    mkSolutionMapping
+      (m_value m ++ chosen)
+      (m_id m)
+      []
+      []
+  ) combinations.
 
-(** Axiom: expand_mapping produces at least one mapping for non-empty version sets. *)
-Axiom expand_mapping_nonempty : forall all_versions m,
+(** Length of cross_product_bindings is the product of lengths. *)
+Lemma cross_product_bindings_length :
+  forall choices,
+    length (cross_product_bindings choices) =
+    fold_right (fun c acc => length c * acc) 1 choices.
+Proof.
+  induction choices as [| c rest IH].
+  - simpl. reflexivity.
+  - simpl. rewrite flat_map_constant_length with (c := length (cross_product_bindings rest)).
+    + rewrite IH. reflexivity.
+    + intros b _. apply length_map.
+Qed.
+
+(** Length of expand_one_condensed is the version set cardinality. *)
+Lemma expand_one_condensed_length : forall cb,
+  length (expand_one_condensed cb) = version_set_card (snd (snd cb)).
+Proof.
+  intros [x [g vs]]. simpl. apply length_map.
+Qed.
+
+(** Length of expand_one_unboundgraph is the version set cardinality. *)
+Lemma expand_one_unboundgraph_length : forall all_versions x,
+  length (expand_one_unboundgraph all_versions x) = version_set_card all_versions.
+Proof.
+  intros. unfold expand_one_unboundgraph. apply length_map.
+Qed.
+
+(** Lemma: expand_mapping produces exactly [m] for non-condensed, non-unboundgraph mappings. *)
+Lemma expand_mapping_nonempty : forall all_versions m,
   m_condensed m = [] ->
   m_unboundgraph m = [] ->
-  expand_mapping all_versions m = [m].
+  expand_mapping all_versions m = [mkSolutionMapping (m_value m ++ []) (m_id m) [] []].
+Proof.
+  intros all_versions m Hc Hu.
+  unfold expand_mapping. rewrite Hc, Hu. simpl. reflexivity.
+Qed.
 
-(** Axiom: The cardinality of expand equals mapping_cardinality.
+(** Product of list of nats distributes over append. *)
+Lemma list_product_app : forall l1 l2,
+  fold_right Nat.mul 1 (l1 ++ l2) = fold_right Nat.mul 1 l1 * fold_right Nat.mul 1 l2.
+Proof.
+  induction l1 as [| a rest IH]; intros l2.
+  - simpl. symmetry. apply Nat.add_0_r.
+  - simpl. rewrite IH. apply Nat.mul_assoc.
+Qed.
+
+(** Rewrite fold as product of mapped lengths. *)
+Lemma cross_product_as_product : forall (choices : list (list ValueBinding)),
+  fold_right (fun c acc => length c * acc) 1 choices =
+  fold_right Nat.mul 1 (map (fun c => length c) choices).
+Proof.
+  induction choices as [| c rest IH].
+  - simpl. reflexivity.
+  - simpl. rewrite IH. reflexivity.
+Qed.
+
+(** Mapped lengths of condensed expansions match version set cardinalities. *)
+Lemma condensed_lengths : forall (conds : list CondensedBinding),
+  map (fun c : list ValueBinding => length c) (map expand_one_condensed conds) =
+  map (fun xc : CondensedBinding => version_set_card (snd (snd xc))) conds.
+Proof.
+  induction conds as [| [x [g vs]] rest IH].
+  - simpl. reflexivity.
+  - simpl. rewrite length_map. f_equal. apply IH.
+Qed.
+
+(** Mapped lengths of unboundgraph expansions match all_versions cardinality. *)
+Lemma unboundgraph_lengths : forall all_versions (ubs : list Var),
+  map (fun c : list ValueBinding => length c) (map (expand_one_unboundgraph all_versions) ubs) =
+  map (fun _ : Var => version_set_card all_versions) ubs.
+Proof.
+  induction ubs as [| x rest IH].
+  - simpl. reflexivity.
+  - simpl. unfold expand_one_unboundgraph at 1. rewrite length_map. f_equal. apply IH.
+Qed.
+
+(** Product of condensed cardinalities matches mapping_cardinality's condensed part. *)
+Lemma fold_mul_condensed : forall (conds : list CondensedBinding),
+  fold_right Nat.mul 1 (map (fun xc : CondensedBinding => version_set_card (snd (snd xc))) conds) =
+  fold_right (fun xc acc => acc * version_set_card (snd (snd xc))) 1 conds.
+Proof.
+  induction conds as [| [x [g vs]] rest IH].
+  - simpl. reflexivity.
+  - simpl. rewrite IH. apply Nat.mul_comm.
+Qed.
+
+(** Product of unboundgraph cardinalities matches mapping_cardinality's unboundgraph part. *)
+Lemma fold_mul_unboundgraph : forall all_versions (ubs : list Var),
+  fold_right Nat.mul 1 (map (fun _ : Var => version_set_card all_versions) ubs) =
+  fold_right (fun _ acc => acc * version_set_card all_versions) 1 ubs.
+Proof.
+  induction ubs as [| x rest IH].
+  - simpl. reflexivity.
+  - simpl. rewrite IH. apply Nat.mul_comm.
+Qed.
+
+(** The cardinality of expand equals mapping_cardinality.
     |expand(m)| = card(m) *)
-Axiom expand_mapping_card : forall m all_versions,
+Lemma expand_mapping_card : forall m all_versions,
   length (expand_mapping all_versions m) = mapping_cardinality m all_versions.
+Proof.
+  intros m all_versions.
+  unfold expand_mapping.
+  rewrite length_map.
+  rewrite cross_product_bindings_length.
+  rewrite cross_product_as_product.
+  rewrite map_app.
+  rewrite list_product_app.
+  unfold mapping_cardinality.
+  rewrite condensed_lengths.
+  rewrite unboundgraph_lengths.
+  rewrite fold_mul_condensed.
+  rewrite fold_mul_unboundgraph.
+  reflexivity.
+Qed.
 
 (** Expand a condensed solution sequence to flat mappings. *)
 Definition expand_sequence (all_versions : VersionSet)
