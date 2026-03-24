@@ -257,3 +257,45 @@ Proof.
   rewrite Hc1, Hc2. simpl.
   reflexivity.
 Qed.
+
+(** ** Decidable Equality for Solution Mappings *)
+
+(** Decidable equality for version sets (list of versions). *)
+Definition VersionSet_eq_dec : forall vs1 vs2 : VersionSet, {vs1 = vs2} + {vs1 <> vs2} :=
+  list_eq_dec Version_eq_dec.
+
+(** Decidable equality for value bindings. *)
+Definition ValueBinding_eq_dec : forall b1 b2 : ValueBinding, {b1 = b2} + {b1 <> b2}.
+Proof.
+  intros [v1 t1] [v2 t2].
+  destruct (Var_eq_dec v1 v2); [subst | right; congruence].
+  destruct (Term_eq_dec t1 t2); [subst; left; reflexivity | right; congruence].
+Defined.
+
+(** Decidable equality for id bindings. *)
+Definition IdBinding_eq_dec : forall b1 b2 : IdBinding, {b1 = b2} + {b1 <> b2}.
+Proof.
+  intros [v1 n1] [v2 n2].
+  destruct (Var_eq_dec v1 v2); [subst | right; congruence].
+  destruct (PeanoNat.Nat.eq_dec n1 n2); [subst; left; reflexivity | right; congruence].
+Defined.
+
+(** Decidable equality for condensed bindings. *)
+Definition CondensedBinding_eq_dec : forall b1 b2 : CondensedBinding, {b1 = b2} + {b1 <> b2}.
+Proof.
+  intros [v1 [n1 vs1]] [v2 [n2 vs2]].
+  destruct (Var_eq_dec v1 v2); [subst | right; congruence].
+  destruct (PeanoNat.Nat.eq_dec n1 n2); [subst | right; congruence].
+  destruct (VersionSet_eq_dec vs1 vs2); [subst; left; reflexivity | right; congruence].
+Defined.
+
+(** Decidable equality for solution mappings. *)
+Definition SolutionMapping_eq_dec :
+  forall m1 m2 : SolutionMapping, {m1 = m2} + {m1 <> m2}.
+Proof.
+  intros [v1 i1 c1 u1] [v2 i2 c2 u2].
+  destruct (list_eq_dec ValueBinding_eq_dec v1 v2); [subst | right; congruence].
+  destruct (list_eq_dec IdBinding_eq_dec i1 i2); [subst | right; congruence].
+  destruct (list_eq_dec CondensedBinding_eq_dec c1 c2); [subst | right; congruence].
+  destruct (list_eq_dec Var_eq_dec u1 u2); [subst; left; reflexivity | right; congruence].
+Defined.

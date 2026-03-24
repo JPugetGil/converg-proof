@@ -5,6 +5,8 @@
 *)
 
 Require Import Stdlib.Lists.List.
+Require Import Stdlib.Sorting.Permutation.
+Require Import Stdlib.Arith.PeanoNat.
 Require Import ConVerG.RDF.
 Require Import ConVerG.Versioning.
 Require Import ConVerG.Models.
@@ -23,8 +25,8 @@ Import ListNotations.
 (** A flat mapping represents a condensed mapping if it's in its expansion.
     m_F ∈ expand(m_C)
 *)
-Definition represents (m_f m_c : SolutionMapping) : Prop :=
-  In m_f (expand_mapping m_c).
+Definition represents (all_versions : VersionSet) (m_f m_c : SolutionMapping) : Prop :=
+  In m_f (expand_mapping all_versions m_c).
 
 (** ** Main Theorem: Evaluation Equivalence *)
 
@@ -55,9 +57,36 @@ Definition represents (m_f m_c : SolutionMapping) : Prop :=
     4. eval_condensed for GroupC/AggregationC/AggregateJoinC
 *)
 Axiom evaluation_equivalence :
-  forall (d_F : FlatModel) (d_C : CondensedModel) (A : FlatExpr),
+  forall (d_F : FlatModel) (d_C : CondensedModel) (A : FlatExpr) (all_versions : VersionSet),
     models_correspond d_F d_C ->
-    eval_flat d_F A ≡ eval_condensed d_C (translate A).
+    seq_equiv all_versions (eval_flat d_F A) (eval_condensed d_C (translate A)).
+
+(** ** Helper Lemmas *)
+
+(** is_permutation implies equal length.
+    Proved via the Permutation library's count_occ characterization. *)
+Lemma is_permutation_length :
+  forall (A : Type) (dec : forall x y : A, {x = y} + {x <> y}) (l1 l2 : list A),
+    is_permutation dec l1 l2 -> length l1 = length l2.
+Proof.
+  intros A dec l1 l2 H.
+  apply Permutation_length.
+  apply (proj2 (Permutation_count_occ dec l1 l2)).
+  exact H.
+Qed.
+
+(** The length of an expanded sequence equals the sum of cardinalities. *)
+Lemma expand_sequence_count_condensed :
+  forall all_versions seq,
+    length (expand_sequence all_versions seq) = count_condensed seq all_versions.
+Proof.
+  intros all_versions seq.
+  unfold expand_sequence, count_condensed.
+  induction seq as [|m rest IH].
+  - simpl. reflexivity.
+  - simpl. rewrite length_app. rewrite IH. rewrite expand_mapping_card.
+    apply Nat.add_comm.
+Qed.
 
 (** ** Corollaries *)
 
@@ -65,14 +94,14 @@ Axiom evaluation_equivalence :
     Every flat mapping in the flat evaluation result is represented by
     some condensed mapping in the condensed evaluation result, and vice versa. *)
 Corollary query_result_preservation :
-  forall (d_F : FlatModel) (d_C : CondensedModel) (A : FlatExpr),
+  forall (d_F : FlatModel) (d_C : CondensedModel) (A : FlatExpr) (all_versions : VersionSet),
     models_correspond d_F d_C ->
     forall m_F : SolutionMapping,
       In m_F (eval_flat d_F A) <->
-      exists m_C, In m_C (eval_condensed d_C (translate A)) /\ represents m_F m_C.
+      exists m_C, In m_C (eval_condensed d_C (translate A)) /\ represents all_versions m_F m_C.
 Proof.
-  intros d_F d_C A Hcorr m_F.
-  pose proof (evaluation_equivalence d_F d_C A Hcorr) as Hequiv.
+  intros d_F d_C A all_versions Hcorr m_F.
+  pose proof (evaluation_equivalence d_F d_C A all_versions Hcorr) as Hequiv.
   unfold seq_equiv, is_permutation in Hequiv.
   split.
   - (* Forward: m_F in flat result → exists m_C representing it *)
@@ -90,7 +119,7 @@ Proof.
     intros [m_C [Hin_cond Hrepresents]].
     unfold represents in Hrepresents.
     assert (Hcount : count_occ SolutionMapping_eq_dec
-                       (expand_sequence (eval_condensed d_C (translate A))) m_F > 0).
+                       (expand_sequence all_versions (eval_condensed d_C (translate A))) m_F > 0).
     { apply count_occ_In.
       unfold expand_sequence.
       apply in_flat_map.
@@ -100,19 +129,26 @@ Proof.
     exact Hcount.
 Qed.
 
-(** Corollary: Cardinality is preserved for COUNT queries.
+(** Theorem: Cardinality is preserved for COUNT queries.
     The number of flat result mappings equals the sum of cardinalities
     of condensed result mappings.
 
     |eval_F(d_F, A)| = Σ_{m ∈ eval_C(d_C, τ(A))} card(m)
 
-    This is axiomatized because it requires the expand_mapping_card axiom
-    applied across the entire solution sequence, combined with
-    evaluation_equivalence. *)
-Axiom count_preservation :
+    Proved from evaluation_equivalence (permutation implies equal length)
+    and expand_mapping_card (each mapping expands to card(m) flat mappings). *)
+Theorem count_preservation :
   forall (d_F : FlatModel) (d_C : CondensedModel) (A : FlatExpr) (all_versions : VersionSet),
     models_correspond d_F d_C ->
     length (eval_flat d_F A) = count_condensed (eval_condensed d_C (translate A)) all_versions.
+Proof.
+  intros d_F d_C A all_versions Hcorr.
+  pose proof (evaluation_equivalence d_F d_C A all_versions Hcorr) as Hequiv.
+  unfold seq_equiv in Hequiv.
+  transitivity (length (expand_sequence all_versions (eval_condensed d_C (translate A)))).
+  - exact (is_permutation_length _ SolutionMapping_eq_dec _ _ Hequiv).
+  - exact (expand_sequence_count_condensed all_versions _).
+Qed.
 
 (** ** Summary of Formal Results *)
 
@@ -141,31 +177,37 @@ Axiom count_preservation :
      mapping, and vice versa. Proved from evaluation_equivalence using
      count_occ-based permutation reasoning.
 
-  5. Representation lattice properties (Representations.v):
+  5. count_preservation (this file):
+     |eval_F(d_F, A)| = Σ card(eval_C(d_C, τ(A))).
+     Proved from evaluation_equivalence (permutation ⟹ equal length)
+     and expand_mapping_card (each mapping expands to card(m) flat mappings).
+
+  6. Representation lattice properties (Representations.v):
      Reflexivity, transitivity, antisymmetry of the representation order,
      plus bounds (Value greatest, UnboundGraph least).
 
-  6. Various structural lemmas (Models.v):
+  7. Various structural lemmas (Models.v):
      condensed_lookup correctness, quad_with_version inverses,
      NoDup-based lookup uniqueness, flatten/condense membership.
 
+  8. SolutionMapping_eq_dec (SolutionMappings.v):
+     Decidable equality for solution mappings, proved from decidable
+     equality of all component types (Term, IRI, Version, nat).
+
   === Axiomatized Results (justified by paper proofs) ===
 
-  7. evaluation_equivalence (this file, Theorem 4.18):
+  9. evaluation_equivalence (this file, Theorem 4.18):
      eval_F(d_F, A_F) ≡ eval_C(d_C, τ(A_F)).
      Requires completing expand_mapping, downgrade_mapping, and
      the full TransformRepr evaluation pipeline.
 
-  8. count_preservation (this file):
-     |eval_F(d_F, A)| = Σ card(eval_C(d_C, τ(A))).
+  10. canonical_representation (CondensedEvaluation.v):
+      Environment transformation preserves sequence equivalence.
 
-  9. canonical_representation (CondensedEvaluation.v):
-     Environment transformation preserves sequence equivalence.
-
-  10. expand_downgrade_commutes (CondensedEvaluation.v):
+  11. expand_downgrade_commutes (CondensedEvaluation.v):
       expand(m) = ∪ expand(downgrade(m, x, r→r')).
 
-  11. typing_monotonic (Environments.v):
+  12. typing_monotonic (Environments.v):
       Higher representations preserve well-typedness.
 
   === Axiomatized Parameters ===
@@ -177,5 +219,4 @@ Axiom count_preservation :
   - vi_to_term: versioned IRI construction
   - expand_mapping: condensed-to-flat mapping expansion
   - downgrade_mapping: single-variable representation change
-  - SolutionMapping_eq_dec: solution mapping equality decision
 *)

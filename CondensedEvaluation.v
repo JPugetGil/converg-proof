@@ -177,12 +177,6 @@ Definition count_condensed (seq : CondensedSolutionSequence) (all_versions : Ver
 
 (** ** Expansion and Sequence Equivalence *)
 
-(** Solution mapping equality decision. Required for count_occ-based
-    permutation equivalence. This is axiomatized because a full
-    decision procedure would require decidable equality on all binding types. *)
-Parameter SolutionMapping_eq_dec :
-  forall m1 m2 : SolutionMapping, {m1 = m2} + {m1 <> m2}.
-
 (** Expand a condensed solution mapping to all the flat mappings it represents.
     expand(m) enumerates the cross-product of all condensed variable instantiations:
     - Value bindings: kept as-is (one value)
@@ -190,36 +184,38 @@ Parameter SolutionMapping_eq_dec :
     - Condensed (g, V): expanded to |V| mappings, one per version
     - UnboundGraph: expanded to all versioned named graphs
 
+    Parameterized by the global version set (needed for UnboundGraph expansion).
     This is axiomatized because the full cross-product enumeration
-    requires the global version set and named graph set, which are
-    dataset-dependent parameters. *)
-Parameter expand_mapping : SolutionMapping -> list SolutionMapping.
+    requires the named graph set, which is a dataset-dependent parameter. *)
+Parameter expand_mapping : VersionSet -> SolutionMapping -> list SolutionMapping.
 
 (** Axiom: expand_mapping produces at least one mapping for non-empty version sets. *)
-Axiom expand_mapping_nonempty : forall m,
+Axiom expand_mapping_nonempty : forall all_versions m,
   m_condensed m = [] ->
   m_unboundgraph m = [] ->
-  expand_mapping m = [m].
+  expand_mapping all_versions m = [m].
 
 (** Axiom: The cardinality of expand equals mapping_cardinality.
     |expand(m)| = card(m) *)
 Axiom expand_mapping_card : forall m all_versions,
-  length (expand_mapping m) = mapping_cardinality m all_versions.
+  length (expand_mapping all_versions m) = mapping_cardinality m all_versions.
 
 (** Expand a condensed solution sequence to flat mappings. *)
-Definition expand_sequence (seq : CondensedSolutionSequence) : list SolutionMapping :=
-  flat_map expand_mapping seq.
+Definition expand_sequence (all_versions : VersionSet)
+                           (seq : CondensedSolutionSequence) : list SolutionMapping :=
+  flat_map (expand_mapping all_versions) seq.
 
 (** Permutation equivalence via count_occ. *)
 Definition is_permutation {A : Type} (eq_dec : forall x y : A, {x = y} + {x <> y})
                           (l1 l2 : list A) : Prop :=
   forall x, count_occ eq_dec l1 x = count_occ eq_dec l2 x.
 
-(** Sequence equivalence: flat and expanded condensed are permutations. *)
-Definition seq_equiv (seq_f : list SolutionMapping) (seq_c : CondensedSolutionSequence) : Prop :=
-  is_permutation SolutionMapping_eq_dec seq_f (expand_sequence seq_c).
-
-Notation "seq1 ≡ seq2" := (seq_equiv seq1 seq2) (at level 70).
+(** Sequence equivalence: flat and expanded condensed are permutations.
+    Parameterized by the global version set for expansion. *)
+Definition seq_equiv (all_versions : VersionSet)
+                     (seq_f : list SolutionMapping)
+                     (seq_c : CondensedSolutionSequence) : Prop :=
+  is_permutation SolutionMapping_eq_dec seq_f (expand_sequence all_versions seq_c).
 
 (** ** Representation Downgrade *)
 
@@ -237,9 +233,9 @@ Parameter downgrade_mapping : SolutionMapping -> Var -> Representation -> Repres
     expand(m) = ∪_{m' ∈ downgrade(m, x, r→r')} expand(m')
 
     This is the key lemma enabling the canonical_representation theorem. *)
-Axiom expand_downgrade_commutes : forall (m : SolutionMapping) (x : Var) (r_from r_to : Representation),
+Axiom expand_downgrade_commutes : forall (all_versions : VersionSet) (m : SolutionMapping) (x : Var) (r_from r_to : Representation),
   r_to <=_r r_from ->
-  expand_mapping m = flat_map expand_mapping (downgrade_mapping m x r_from r_to).
+  expand_mapping all_versions m = flat_map (expand_mapping all_versions) (downgrade_mapping m x r_from r_to).
 
 (** ** Canonical Representation Theorem *)
 
@@ -256,8 +252,8 @@ Axiom expand_downgrade_commutes : forall (m : SolutionMapping) (x : Var) (r_from
     Currently axiomatized because eval_condensed for TransformRepr
     requires a proper implementation of the downgrade pipeline. *)
 Axiom canonical_representation :
-  forall (d : CondensedModel) (e : CondensedExpr)
+  forall (all_versions : VersionSet) (d : CondensedModel) (e : CondensedExpr)
          (env env' : list (Var * Representation))
          (seq_f : list SolutionMapping),
-    seq_f ≡ eval_condensed d e ->
-    seq_f ≡ eval_condensed d (TransformRepr env env' e).
+    seq_equiv all_versions seq_f (eval_condensed d e) ->
+    seq_equiv all_versions seq_f (eval_condensed d (TransformRepr env env' e)).
