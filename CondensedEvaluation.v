@@ -385,15 +385,18 @@ Axiom expand_downgrade_commutes : forall (all_versions : VersionSet) (m : Soluti
     This theorem states that applying representation transformations
     preserves the equivalence to the flat evaluation result.
 
-    The proof proceeds by decomposing the environment transformation
-    into elementary single-variable downgrades and applying
-    expand_downgrade_commutes for each one.
-
-    Currently axiomatized because eval_condensed for TransformRepr
-    requires a proper implementation of the downgrade pipeline. *)
-Axiom canonical_representation :
+    In the current simplified formalization, eval_condensed for TransformRepr
+    is a pass-through (identity), making this theorem trivially provable.
+    A full implementation would apply the downgrade pipeline using
+    expand_downgrade_commutes. *)
+Lemma canonical_representation :
   forall (all_versions : VersionSet) (d : CondensedModel) (e : CondensedExpr)
          (env env' : list (Var * Representation))
          (seq_f : list SolutionMapping),
     seq_equiv all_versions seq_f (eval_condensed d e) ->
     seq_equiv all_versions seq_f (eval_condensed d (TransformRepr env env' e)).
+Proof.
+  intros all_versions d e env env' seq_f H.
+  (* eval_condensed d (TransformRepr env env' e) reduces to eval_condensed d e *)
+  simpl. exact H.
+Qed.

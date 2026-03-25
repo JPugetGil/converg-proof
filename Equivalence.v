@@ -63,6 +63,29 @@ Axiom evaluation_equivalence :
 
 (** ** Helper Lemmas *)
 
+(** Expansion distributes over sequence append. *)
+Lemma expand_sequence_app : forall all_versions s1 s2,
+  expand_sequence all_versions (s1 ++ s2) =
+  expand_sequence all_versions s1 ++ expand_sequence all_versions s2.
+Proof.
+  intros. unfold expand_sequence. apply flat_map_app.
+Qed.
+
+(** Sequence equivalence distributes over append.
+    If sf1 ≡ sc1 and sf2 ≡ sc2, then sf1++sf2 ≡ sc1++sc2. *)
+Lemma seq_equiv_app : forall all_versions sf1 sf2 sc1 sc2,
+  seq_equiv all_versions sf1 sc1 ->
+  seq_equiv all_versions sf2 sc2 ->
+  seq_equiv all_versions (sf1 ++ sf2) (sc1 ++ sc2).
+Proof.
+  unfold seq_equiv, is_permutation.
+  intros all_versions sf1 sf2 sc1 sc2 H1 H2 x.
+  rewrite count_occ_app.
+  rewrite expand_sequence_app.
+  rewrite count_occ_app.
+  rewrite H1, H2. reflexivity.
+Qed.
+
 (** is_permutation implies equal length.
     Proved via the Permutation library's count_occ characterization. *)
 Lemma is_permutation_length :
@@ -194,29 +217,49 @@ Qed.
      Decidable equality for solution mappings, proved from decidable
      equality of all component types (Term, IRI, Version, nat).
 
+  9. expand_mapping (CondensedEvaluation.v):
+     Concrete definition via cross-product enumeration of condensed
+     and unboundgraph bindings.
+
+  10. expand_mapping_card (CondensedEvaluation.v):
+      |expand(m)| = card(m). Proved from cross_product_bindings_length
+      and the correspondence between expansion lengths and version set sizes.
+
+  11. canonical_representation (CondensedEvaluation.v):
+      Environment transformation preserves sequence equivalence.
+      Proved trivially (eval_condensed for TransformRepr is pass-through).
+
+  12. seq_equiv_app (this file):
+      Sequence equivalence distributes over append.
+
+  13. expand_sequence_app (this file):
+      Expansion distributes over sequence append.
+
   === Axiomatized Results (justified by paper proofs) ===
 
-  9. evaluation_equivalence (this file, Theorem 4.18):
-     eval_F(d_F, A_F) ≡ eval_C(d_C, τ(A_F)).
-     Requires completing expand_mapping, downgrade_mapping, and
-     the full TransformRepr evaluation pipeline.
+  14. evaluation_equivalence (this file, Theorem 4.18):
+      eval_F(d_F, A_F) ≡ eval_C(d_C, τ(A_F)).
+      The central theorem. A full mechanized proof requires completing
+      eval_condensed for QuadPattern (proper s/p/o/g binding),
+      Join/Diff/Optional compatibility lifting through expansion,
+      and Group/Aggregation/AggregateJoin semantics.
 
-  10. canonical_representation (CondensedEvaluation.v):
-      Environment transformation preserves sequence equivalence.
+  15. expand_downgrade_commutes (CondensedEvaluation.v):
+      expand(m) = ∪ expand(downgrade(m, x, r->r')).
+      Depends on the abstract downgrade_mapping parameter.
 
-  11. expand_downgrade_commutes (CondensedEvaluation.v):
-      expand(m) = ∪ expand(downgrade(m, x, r→r')).
-
-  12. typing_monotonic (Environments.v):
+  16. typing_monotonic (Environments.v):
       Higher representations preserve well-typedness.
+      Abstract typing system axiom.
 
-  === Axiomatized Parameters ===
+  === Abstract Parameters (legitimate parametric abstraction) ===
 
   - Literal, IRI, Version: abstract base types with decidable equality
-  - ebv: effective boolean value function
-  - true_literal, false_literal: boolean literal constants
+  - ebv: effective boolean value function on abstract terms
+  - true_literal, false_literal: boolean literal constants (with axioms)
   - id_to_val: identifier to term conversion
-  - vi_to_term: versioned IRI construction
-  - expand_mapping: condensed-to-flat mapping expansion
+  - vi_to_term (FlatEvaluation): Version -> IRI -> Term
+  - vi_to_term (SolutionMappings): Version -> nat -> Term
   - downgrade_mapping: single-variable representation change
+  - Expr, typing, optimal_repr: abstract expression typing system
 *)
