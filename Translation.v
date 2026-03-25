@@ -25,7 +25,8 @@ Import ListNotations.
 *)
 
 (** Placeholder for id-to-value conversion function. *)
-Parameter id_to_val : nat -> Term.
+Definition id_to_val (n : nat) : Term :=
+  if Nat.even n then TermLit (Nat.div2 n) else TermIRI (Nat.div2 n).
 
 (** Translate from UnboundGraph to Condensed. *)
 Definition translate_unboundgraph_to_condensed : list CondensedValue :=

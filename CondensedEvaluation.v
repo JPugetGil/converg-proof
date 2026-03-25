@@ -200,12 +200,25 @@ Definition expand_one_unboundgraph (all_versions : VersionSet) (x : Var)
   : list ValueBinding :=
   map (fun v => (x, SolutionMappings.vi_to_term v 0)) all_versions.
 
+(** Expand one Id binding to a Value binding. *)
+Definition expand_one_id (ib : IdBinding) : ValueBinding :=
+  let (x, n) := ib in (x, Translation.id_to_val n).
+
+Definition val_to_id (t : Term) : nat :=
+  match t with
+  | TermLit n => 2 * n
+  | TermIRI n => 2 * n + 1
+  end.
+
+Parameter decantor : nat -> (Version * nat).
+Axiom decantor_correct : forall v g, decantor (SolutionMappings.cantor_pair v g) = (v, g).
+
 (** ** Expansion and Sequence Equivalence *)
 
 (** Expand a condensed solution mapping to all the flat mappings it represents.
     expand(m) enumerates the cross-product of all condensed variable instantiations:
-    - Value bindings: kept as-is (one value)
-    - Id bindings: kept as-is (one id)
+    - Value bindings: kept as-is
+    - Id bindings: converted to Value bindings
     - Condensed (g, V): expanded to |V| mappings, one per version
     - UnboundGraph: expanded to all versioned named graphs
 
@@ -216,10 +229,11 @@ Definition expand_mapping (all_versions : VersionSet) (m : SolutionMapping)
   let unboundgraph_choices := map (expand_one_unboundgraph all_versions) (m_unboundgraph m) in
   let all_choices := condensed_choices ++ unboundgraph_choices in
   let combinations := cross_product_bindings all_choices in
+  let id_values := map expand_one_id (m_id m) in
   map (fun chosen =>
     mkSolutionMapping
-      (m_value m ++ chosen)
-      (m_id m)
+      (m_value m ++ id_values ++ chosen)
+      [] (* Ids converted to values *)
       []
       []
   ) combinations.
@@ -251,11 +265,11 @@ Proof.
   intros. unfold expand_one_unboundgraph. apply length_map.
 Qed.
 
-(** Lemma: expand_mapping produces exactly [m] for non-condensed, non-unboundgraph mappings. *)
+(** Lemma: expand_mapping produces exactly [m] (with expanded ids) for non-condensed, non-unboundgraph mappings. *)
 Lemma expand_mapping_nonempty : forall all_versions m,
   m_condensed m = [] ->
   m_unboundgraph m = [] ->
-  expand_mapping all_versions m = [mkSolutionMapping (m_value m ++ []) (m_id m) [] []].
+  expand_mapping all_versions m = [mkSolutionMapping (m_value m ++ map expand_one_id (m_id m) ++ []) [] [] []].
 Proof.
   intros all_versions m Hc Hu.
   unfold expand_mapping. rewrite Hc, Hu. simpl. reflexivity.
@@ -359,23 +373,51 @@ Definition seq_equiv (all_versions : VersionSet)
 
 (** ** Representation Downgrade *)
 
-(** Downgrade a variable's representation from r_from to r_to in a mapping.
-    This produces multiple mappings when going from a more condensed to
-    a more expanded representation (e.g., Condensed → Id enumerates versions).
+(** Downgrade a variable's representation from r_from to r_to in a mapping. *)
+Definition downgrade_mapping (m : SolutionMapping) (x : Var) (r_from r_to : Representation)
+                             : list SolutionMapping :=
+  match r_from, r_to with
+  | Value, Id =>
+      match lookup_value x (m_value m) with
+      | Some t =>
+          let id := val_to_id t in
+          let new_value := filter (fun b => if Var_eq_dec (fst b) x then false else true) (m_value m) in
+          let new_id := (x, id) :: m_id m in
+          [mkSolutionMapping new_value new_id (m_condensed m) (m_unboundgraph m)]
+      | None => [m]
+      end
+  | Id, Condensed =>
+      match lookup_id x (m_id m) with
+      | Some n =>
+          let (v, g) := decantor n in
+          let new_id := filter (fun b => if Var_eq_dec (fst b) x then false else true) (m_id m) in
+          let new_cond := (x, (g, [v])) :: m_condensed m in
+          [mkSolutionMapping (m_value m) new_id new_cond (m_unboundgraph m)]
+      | None => [m]
+      end
+  | _, _ => [m]
+  end.
 
-    Axiomatized because the implementation depends on dataset-specific
-    parameters (version sets, named graph enumerations). *)
-Parameter downgrade_mapping : SolutionMapping -> Var -> Representation -> Representation -> list SolutionMapping.
-
-(** Axiom: expand commutes with representation downgrade.
-    This captures the fundamental property that the order of
-    expansion and downgrade does not matter:
-    expand(m) = ∪_{m' ∈ downgrade(m, x, r→r')} expand(m')
-
-    This is the key lemma enabling the canonical_representation theorem. *)
-Axiom expand_downgrade_commutes : forall (all_versions : VersionSet) (m : SolutionMapping) (x : Var) (r_from r_to : Representation),
+(** Axiom: expand commutes with representation downgrade. *)
+Theorem expand_downgrade_commutes : forall (all_versions : VersionSet) (m : SolutionMapping) (x : Var) (r_from r_to : Representation),
   r_to <=_r r_from ->
   expand_mapping all_versions m = flat_map (expand_mapping all_versions) (downgrade_mapping m x r_from r_to).
+Proof.
+  intros.
+  destruct r_from, r_to; try (simpl; rewrite app_nil_r; reflexivity).
+  (* Value -> Id case *)
+  - unfold downgrade_mapping.
+    destruct (lookup_value x (m_value m)) eqn:Hl.
+    + (* Need to prove expand m = expand m' *)
+      admit.
+    + simpl. rewrite app_nil_r. reflexivity.
+  (* Id -> Condensed case *)
+  - unfold downgrade_mapping.
+    destruct (lookup_id x (m_id m)) eqn:Hl.
+    + (* Need to prove expand m = expand m' *)
+      admit.
+    + simpl. rewrite app_nil_r. reflexivity.
+Admitted.
 
 (** ** Canonical Representation Theorem *)
 

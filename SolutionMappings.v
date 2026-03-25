@@ -5,6 +5,7 @@
 *)
 
 Require Import Stdlib.Lists.List.
+Require Import Stdlib.Arith.PeanoNat.
 Require Import ConVerG.RDF.
 Require Import ConVerG.Versioning.
 Require Import ConVerG.Representations.
@@ -86,14 +87,16 @@ Fixpoint lookup_condensed (x : Var) (bindings : list CondensedBinding)
 
 (** ** vals Function *)
 
-(** Abstract function mapping (version, graph_id) to a Term.
-    This corresponds to the VI function in the paper:
-    VI(v, g) returns the versioned IRI for named graph g at version v. *)
-Parameter vi_to_term : Version -> nat -> Term.
+Definition cantor_pair (n m : nat) : nat :=
+  Nat.div ((n + m) * (n + m + 1)) 2 + m.
+
+(** Abstract function mapping (version, graph_id) to a Term. *)
+Definition vi_to_term (v : Version) (g : nat) : Term := TermIRI (cantor_pair v g).
 
 (** The set of all versioned named graphs, parameterized by versions and graph ids.
     In a full implementation this would enumerate all (v, g) pairs. *)
-Parameter all_versioned_named_graphs : VersionSet -> list nat -> list Term.
+Definition all_versioned_named_graphs (vs : VersionSet) (gs : list nat) : list Term :=
+  flat_map (fun v => map (fun g => vi_to_term v g) gs) vs.
 
 (** The vals function returns the set of terms for a variable in a mapping.
     vals_m(?var) depends on the representation of the variable:

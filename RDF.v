@@ -11,12 +11,12 @@ Import ListNotations.
 (** ** Basic Types *)
 
 (** Literals denote resources of the real world. *)
-Parameter Literal : Type.
-Parameter Literal_eq_dec : forall l1 l2 : Literal, {l1 = l2} + {l1 <> l2}.
+Definition Literal : Type := nat.
+Definition Literal_eq_dec : forall l1 l2 : Literal, {l1 = l2} + {l1 <> l2} := PeanoNat.Nat.eq_dec.
 
 (** IRIs (Internationalized Resource Identifiers) identify resources. *)
-Parameter IRI : Type.
-Parameter IRI_eq_dec : forall i1 i2 : IRI, {i1 = i2} + {i1 <> i2}.
+Definition IRI : Type := nat.
+Definition IRI_eq_dec : forall i1 i2 : IRI, {i1 = i2} + {i1 <> i2} := PeanoNat.Nat.eq_dec.
 
 (** Terms are either IRIs or Literals. *)
 Inductive Term : Type :=

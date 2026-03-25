@@ -21,15 +21,25 @@ Definition SolutionSequence := list SolutionMapping.
 
 (** ** Expression Evaluation *)
 
-(** Effective Boolean Value (EBV) evaluation. *)
-Parameter ebv : Term -> bool.
-
 (** Boolean literal constants with proper axioms. *)
-Parameter true_literal : Literal.
-Parameter false_literal : Literal.
-Axiom true_false_distinct : true_literal <> false_literal.
-Axiom ebv_true : ebv (TermLit true_literal) = true.
-Axiom ebv_false : ebv (TermLit false_literal) = false.
+Definition true_literal : Literal := 1.
+Definition false_literal : Literal := 0.
+
+Theorem true_false_distinct : true_literal <> false_literal.
+Proof. unfold true_literal, false_literal. discriminate. Qed.
+
+(** Effective Boolean Value (EBV) evaluation. *)
+Definition ebv (t : Term) : bool :=
+  match t with
+  | TermLit l => if Literal_eq_dec l true_literal then true else false
+  | _ => false
+  end.
+
+Theorem ebv_true : ebv (TermLit true_literal) = true.
+Proof. simpl. destruct (Literal_eq_dec true_literal true_literal); congruence. Qed.
+
+Theorem ebv_false : ebv (TermLit false_literal) = false.
+Proof. simpl. destruct (Literal_eq_dec false_literal true_literal); congruence. Qed.
 
 Definition bool_to_term (b : bool) : Term :=
   if b then TermLit true_literal else TermLit false_literal.
@@ -89,7 +99,7 @@ Definition expr_is_true (e : SparqlExpr) (m : SolutionMapping) : bool :=
 (** ** Flat Algebra Evaluation *)
 
 (** Convert versioned IRI to term. *)
-Parameter vi_to_term : Version -> IRI -> Term.
+Definition vi_to_term (v : Version) (i : IRI) : Term := TermIRI (v + i).
 
 (** Helper for filter_map. *)
 Definition filter_map {A B : Type} (f : A -> option B) (l : list A) : list B :=

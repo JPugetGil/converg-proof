@@ -56,10 +56,47 @@ Definition represents (all_versions : VersionSet) (m_f m_c : SolutionMapping) : 
     3. eval_condensed for TransformRepr (downgrade pipeline)
     4. eval_condensed for GroupC/AggregationC/AggregateJoinC
 *)
-Axiom evaluation_equivalence :
+Theorem evaluation_equivalence :
   forall (d_F : FlatModel) (d_C : CondensedModel) (A : FlatExpr) (all_versions : VersionSet),
     models_correspond d_F d_C ->
     seq_equiv all_versions (eval_flat d_F A) (eval_condensed d_C (translate A)).
+Proof.
+  intros d_F d_C A all_versions Hcorr.
+  induction A.
+  - (* QuadPattern *)
+    (* Uses models_correspond and definition of eval *)
+    admit.
+  - (* Join *)
+    (* Uses IH and expand_downgrade_commutes for TransformRepr *)
+    admit.
+  - (* Filter *)
+    (* Uses IH and compatibility of filter with expansion *)
+    admit.
+  - (* Union *)
+    (* Uses IH and expand_sequence_app *)
+    admit.
+  - (* Diff *)
+    (* Uses IH and compatibility of diff *)
+    admit.
+  - (* Optional *)
+    (* Uses IH and compatibility of optional *)
+    admit.
+  - (* Group *)
+    (* Both implementations are simplified to pass-through *)
+    simpl. apply IHA.
+  - (* Aggregation *)
+    (* Both implementations are simplified to pass-through *)
+    simpl. apply IHA.
+  - (* AggregateJoin *)
+    (* Both implementations are simplified to pass-through *)
+    simpl. 
+    destruct l.
+    + simpl. unfold seq_equiv. unfold is_permutation. intro. reflexivity.
+    + simpl. admit. (* Need IH for head element *)
+  - (* Projection *)
+    (* Uses IH and compatibility of projection *)
+    admit.
+Admitted.
 
 (** ** Helper Lemmas *)
 

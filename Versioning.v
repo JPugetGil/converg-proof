@@ -12,8 +12,8 @@ Import ListNotations.
 (** ** Version Type *)
 
 (** A version represents a snapshot of the RDF data at a given point in time. *)
-Parameter Version : Type.
-Parameter Version_eq_dec : forall v1 v2 : Version, {v1 = v2} + {v1 <> v2}.
+Definition Version : Type := nat.
+Definition Version_eq_dec : forall v1 v2 : Version, {v1 = v2} + {v1 <> v2} := PeanoNat.Nat.eq_dec.
 
 (** The set of all versions. *)
 Definition VersionSet := FiniteSet Version.
