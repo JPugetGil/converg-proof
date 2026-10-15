@@ -26,7 +26,7 @@ make -f CoqMakefile
 | `Models.v` | flat model, condensed model, condensation `C`, flattening `F`, `C∘F = id`, `F∘C = id`, bag form of model correspondence | Def. 5.4–5.6, Thm 6.1 |
 | `Representations.v` | dictionary encoding (bijection), representations `ψ ≤ ζ ≤ ι ≤ ν`, meet/join | Def. 5.3, 5.18 |
 | `Environments.v` | environments `Γ`, raising | Def. 5.19 |
-| `SolutionMappings.v` | bindings, flat/condensed mappings, expansion `Ξ`, cardinality, compatibility and merge in both algebras, Lemmas 6.3 (value preservation), 6.4 (compatibility preservation), 6.6 (join cardinality, as a `Permutation`), 6.7 (multiplicative cardinality) | Def. 5.7, 5.8, 5.20–5.26, 5.39 |
+| `SolutionMappings.v` | bindings, flat/condensed mappings, expansion `Ξ`, cardinality, compatibility and merge in both algebras, Lemmas 6.3 (value preservation), 6.4 (compatibility preservation, both directions: `compat_flat_expand_cond`, `compat_cond_expand_flat`), 6.6 (join cardinality, as a `Permutation`: `expand_merge_perm`), 6.7 (multiplicative cardinality: `expand_length`) | Def. 5.7, 5.8, 5.20–5.26, 5.39 |
 | `Expressions.v` | SPARQL expressions, evaluation over a partial lookup, conditions | §5.2 |
 | `Promotion.v` | promotion `Υ` per binding / variable / mapping; Lemmas 6.1 and 6.2 (expansion preserved) | Def. 5.36 |
 | `Difference.v` | product-set difference as disjoint slices (Lemma 5.1), residual over several blockers, condensed `DIFF` and its equivalence with the flat `DIFF` | Def. 5.29, 5.30 |
@@ -34,9 +34,28 @@ make -f CoqMakefile
 | `FlatAlgebra.v`, `CondensedAlgebra.v` | syntax of both algebras (`TransformReprC` is `Υ`) | Def. 5.9–5.17, 5.27–5.37 |
 | `FlatEvaluation.v`, `CondensedEvaluation.v` | evaluation `⟦e⟧_F(d_F)` and `⟦e⟧_C(d_C)` | §5.2, §5.3 |
 | `Translation.v` | translation `τ` with result environment `R(e)` | Def. 5.40–5.41 |
-| `Equivalence.v` | per-operator lemmas, `translate_correct`, **`evaluation_equivalence`** (Thm 6.2), `count_preservation`, `multiplicity_preservation` | Thm 6.2 |
+| `TypeSystem.v` | typing judgement `typed E_C Γ` of condensed expressions, erasure of promotions, `translate_typed` (τ produces well-typed expressions) | Def. 5.38 |
+| `Equivalence.v` | per-operator lemmas, `typed_correct` (type soundness + equivalence for every well-typed condensed expression), **`evaluation_equivalence`** (Thm 6.2 for τ), `count_preservation`, `multiplicity_preservation` | Thm 6.2 |
 
-## Main statement
+## Main statements
+
+For every well-typed condensed expression `E_C` (judgement `typed E_C Γ`,
+Definition 5.38), with `erase E_C` the flat expression obtained by forgetting
+the promotions `Υ`:
+
+```coq
+Theorem typed_evaluation_equivalence : forall ec env dF dC,
+  typed ec env -> wf_condensed_model dC ->
+  NoDup dF -> models_correspond dF dC ->
+  Permutation (eval_flat (erase ec) dF) (flat_map expand (eval_cond ec dC)).
+
+Theorem type_soundness : forall ec env dC,
+  typed ec env -> wf_condensed_model dC ->
+  Forall (fun m => wf_cmap m /\ env_ok env m) (eval_cond ec dC).
+```
+
+For the translation `τ` (`translate_typed` shows that `τ(e)` is well-typed
+and erases to `e`):
 
 ```coq
 Theorem evaluation_equivalence : forall e dF dC,
@@ -50,7 +69,10 @@ Bag semantics: solution sequences are lists and `≅` is `Permutation`.
 `expand` is `Ξ`. `wf_flat_expr` is the thesis's unique-naming assumption
 (no repeated variable in a quad pattern, fresh variable in `BIND`);
 `wf_condensed_model` says that the condensed model is a function with
-non-empty, duplicate-free version sets.
+non-empty, duplicate-free version sets. The typing judgement carries the
+same conditions (`TyQuadPattern`, `TyExtend`) and requires point-valued
+variables (ι or ν) in the expressions of `FILTER`, `BIND`, `DIFF`,
+`OPTIONAL` and for the variables dropped by `PROJECTION`.
 
 Assumptions (checked with `Print Assumptions`): the abstract types
 `IRI`, `Literal`, `Version` with decidable equality; `VI` injective;

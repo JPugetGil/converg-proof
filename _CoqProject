@@ -23,6 +23,7 @@ CondensedAlgebra.v
 FlatEvaluation.v
 CondensedEvaluation.v
 Translation.v
+TypeSystem.v
 
 # Main theorem
 Equivalence.v

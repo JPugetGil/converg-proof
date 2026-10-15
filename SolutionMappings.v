@@ -1033,6 +1033,23 @@ Proof.
            apply inb_false_iff. exact Hy1.
 Qed.
 
+(** Converse of Lemma 6.4: compatible condensed mappings have compatible
+    expansions (their merge is non-empty). *)
+Lemma compat_cond_expand_flat : forall m1 m2,
+  wf_cmap m1 -> wf_cmap m2 -> compat_cond m1 m2 = true ->
+  exists f1 f2, In f1 (expand m1) /\ In f2 (expand m2) /\
+                compat_flat f1 f2 = true.
+Proof.
+  intros m1 m2 H1 H2 Hcc.
+  assert (Hne : In (witness_flat (merge_cond m1 m2)) (expand (merge_cond m1 m2))).
+  { apply witness_flat_in_expand. apply wf_cmap_vals_nonempty.
+    apply merge_cond_wf; assumption. }
+  destruct (expand_merge_inv m1 m2 _ (proj1 H1) (proj1 H2)
+              (wf_cmap_NoDup_vals _ H1) Hcc Hne)
+    as [f1 [f2 [Hf1 [Hf2 [Hc _]]]]].
+  exists f1, f2. auto.
+Qed.
+
 (** ** The Flat Join of two Sequences *)
 
 Definition join_flat (L1 L2 : list FMapping) : list FMapping :=

@@ -29,6 +29,7 @@ Require Import ConVerG.CondensedAlgebra.
 Require Import ConVerG.FlatEvaluation.
 Require Import ConVerG.CondensedEvaluation.
 Require Import ConVerG.Translation.
+Require Import ConVerG.TypeSystem.
 Import ListNotations.
 
 (** ** List utilities *)
@@ -390,16 +391,6 @@ Proof.
   - split; [split; assumption|]. apply env_ok_cons_fresh; assumption.
 Qed.
 
-Lemma extend_fresh : forall e x env' M,
-  ~ In x (flat_expr_vars e) ->
-  (forall z, In z (env_domain env') -> In z (flat_expr_vars e)) ->
-  Forall (inv env') M -> forall m, In m M -> ~ In x (keys m).
-Proof.
-  intros e x env' M Hx Hdom H m Hm Hk. apply Hx. apply Hdom.
-  rewrite Forall_forall in H. destruct (H m Hm) as [_ O].
-  eapply env_ok_keys_domain; eauto.
-Qed.
-
 (** ** Projection *)
 
 Lemma projection_expand_eq : forall vars M,
@@ -438,128 +429,130 @@ Proof.
   split; [apply restrict_wf; exact W | apply env_ok_restrict; exact O].
 Qed.
 
-Lemma projection_point : forall env vars m,
-  inv (env_raise env (needs env (dropped_vars env vars) Id)) m ->
-  forall y b, In (y, b) m -> memb y vars = false -> point_val b <> None.
+(** ** Theorem 6.2, for every well-typed condensed expression *)
+
+(** Type soundness and evaluation equivalence: a well-typed condensed
+    expression computes, up to expansion, the same bag as the flat
+    expression it erases to, and its results respect the environment of
+    the typing judgement. *)
+Theorem typed_correct : forall ec env dF dC,
+  typed ec env -> wf_condensed_model dC -> Permutation dF (flatten dC) ->
+  Permutation (eval_flat (erase ec) dF) (flat_map expand (eval_cond ec dC)) /\
+  Forall (inv env) (eval_cond ec dC).
 Proof.
-  intros env vars m [[Wk _] O] y b Hin Hy.
-  assert (Hl : lookup y m = Some b) by (apply in_lookup_NoDup; assumption).
-  destruct (O y b Hl) as [r [Hr Hle]].
-  assert (Hdom : In y (env_domain env)).
-  { eapply (proj1 (raise_needs_domain _ _ _ _)). eapply env_lookup_in_domain; eauto. }
-  assert (Hdrop : In y (dropped_vars env vars)).
-  { unfold dropped_vars. apply filter_In. split; [exact Hdom | rewrite Hy; reflexivity]. }
-  pose proof (raise_needs_meets env _ Id y r Hdrop Hr) as HId.
-  apply point_val_repr. apply Id_leq_point. eapply leq_repr_trans; eauto.
+  intros ec env dF dC H HwfC HP.
+  induction H as [s p o g Hnd | e1 e2 env1 env2 T1 IH1 T2 IH2
+                  | c e env T IH Hpts | e1 e2 env1 env2 T1 IH1 T2 IH2
+                  | e1 e2 c env1 env2 T1 IH1 T2 IH2 Hpts1 Hpts2
+                  | e1 e2 c env1 env2 T1 IH1 T2 IH2 Hpts1 Hpts2
+                  | x ex e env T IH Hfresh Hpts
+                  | e vars env T IH Hdrop
+                  | reqs e env T IH];
+    cbn [erase eval_flat eval_cond].
+  - (* quad pattern *)
+    split.
+    + apply qp_perm. exact HP.
+    + apply Forall_forall. intros m Hm. apply (qp_inv s p o g dC m Hnd HwfC Hm).
+  - (* join *)
+    destruct IH1 as [P1 I1]. destruct IH2 as [P2 I2]. split.
+    + apply join_perm; [apply (inv_wf _ _ I1) | apply (inv_wf _ _ I2) | exact P1 | exact P2].
+    + apply Forall_forall. intros m Hm. eapply join_inv; eauto.
+  - (* filter *)
+    destruct IH as [P1 I1]. split.
+    + apply filter_perm; [|exact P1].
+      eapply Forall_impl; [|exact I1]. intros m [_ O].
+      eapply env_ok_point_on; [exact O | exact Hpts].
+    + apply filter_inv. exact I1.
+  - (* union *)
+    destruct IH1 as [P1 I1]. destruct IH2 as [P2 I2]. split.
+    + rewrite flat_map_app. apply Permutation_app; assumption.
+    + apply union_inv; assumption.
+  - (* difference *)
+    destruct IH1 as [P1 I1]. destruct IH2 as [P2 I2]. split.
+    + apply diff_cond_perm;
+        [apply (inv_wf _ _ I1) | apply (inv_wf _ _ I2) | | exact P1 | exact P2].
+      intros m1 m2 Hm1 Hm2. rewrite Forall_forall in I1, I2.
+      destruct (I1 m1 Hm1) as [_ O1]. destruct (I2 m2 Hm2) as [_ O2].
+      apply merge_cond_point_on; eapply env_ok_point_on; eassumption.
+    + apply diff_inv. exact I1.
+  - (* optional *)
+    destruct IH1 as [P1 I1]. destruct IH2 as [P2 I2].
+    assert (Q1 : Forall (fun m => point_on (expr_vars c) m) (eval_cond e1 dC)).
+    { eapply Forall_impl; [|exact I1]. intros m [_ O].
+      eapply env_ok_point_on; [exact O | exact Hpts1]. }
+    assert (Q2 : Forall (fun m => point_on (expr_vars c) m) (eval_cond e2 dC)).
+    { eapply Forall_impl; [|exact I2]. intros m [_ O].
+      eapply env_ok_point_on; [exact O | exact Hpts2]. }
+    split.
+    + apply optional_perm;
+        [apply (inv_wf _ _ I1) | apply (inv_wf _ _ I2) | exact Q1 | exact Q2
+        | exact P1 | exact P2].
+    + unfold optional_cond. apply Forall_app. split.
+      * apply filter_inv. apply Forall_forall. intros m Hm. eapply join_inv; eauto.
+      * eapply Forall_impl; [|apply diff_inv; exact I1]. intros m [W O].
+        split; [exact W|]. eapply env_ok_weaken; [apply env_meet_weaker_l | exact O].
+  - (* extend *)
+    destruct IH as [P1 I1]. split.
+    + apply extend_perm; [|exact P1].
+      eapply Forall_impl; [|exact I1]. intros m [_ O].
+      eapply env_ok_point_on; [exact O | exact Hpts].
+    + apply extend_inv; [|exact I1]. intros m Hm Hk. apply Hfresh.
+      rewrite Forall_forall in I1. destruct (I1 m Hm) as [_ O].
+      eapply env_ok_keys_domain; eauto.
+  - (* projection *)
+    destruct IH as [P1 I1]. split.
+    + apply projection_perm; [|exact P1].
+      eapply Forall_impl; [|exact I1]. intros m [[Wk _] O] y b Hin Hy.
+      assert (Hl : lookup y m = Some b) by (apply in_lookup_NoDup; assumption).
+      destruct (O y b Hl) as [r [Hr Hle]].
+      apply point_val_repr. apply Id_leq_point.
+      eapply leq_repr_trans; [apply (Hdrop y r Hr Hy) | exact Hle].
+    + apply projection_inv. exact I1.
+  - (* representation transformation *)
+    destruct IH as [P1 I1]. split.
+    + apply (promote_seq_perm_inv _ reqs _ _ I1 P1).
+    + apply promote_seq_inv. exact I1.
 Qed.
 
-(** ** Theorem 6.2 *)
-
+(** The translation τ: its output is well-typed and erases to the source
+    expression, hence Theorem 6.2 for τ(e). *)
 Theorem translate_correct : forall e dF dC,
   wf_flat_expr e -> wf_condensed_model dC -> Permutation dF (flatten dC) ->
   Permutation (eval_flat e dF)
               (flat_map expand (eval_cond (fst (translate e)) dC)) /\
   Forall (inv (snd (translate e))) (eval_cond (fst (translate e)) dC).
 Proof.
-  intros e dF dC.
-  induction e as [s p o g | e1 IH1 e2 IH2 | c e IH | e1 IH1 e2 IH2
-                  | e1 IH1 e2 IH2 c | e1 IH1 e2 IH2 c | x ex e IH | e IH vars];
-    intros Hwf HwfC HP.
-  - (* quad pattern *)
-    rewrite translate_qp. cbn [fst snd eval_flat eval_cond]. split.
-    + apply qp_perm. exact HP.
-    + apply Forall_forall. intros m Hm. apply (qp_inv s p o g dC m Hwf HwfC Hm).
-  - (* join *)
-    destruct Hwf as [Hwf1 Hwf2].
-    destruct (IH1 Hwf1 HwfC HP) as [P1 I1]. destruct (IH2 Hwf2 HwfC HP) as [P2 I2].
-    rewrite translate_join. cbn [fst snd eval_flat eval_cond]. split.
-    + apply join_perm; [apply (inv_wf _ _ I1) | apply (inv_wf _ _ I2) | exact P1 | exact P2].
-    + apply Forall_forall. intros m Hm. eapply join_inv; eauto.
-  - (* filter *)
-    destruct (IH Hwf HwfC HP) as [P1 I1].
-    rewrite translate_filter. cbn [fst snd eval_flat eval_cond].
-    set (reqs := needs (snd (translate e)) (expr_vars c) Value).
-    pose proof (promote_seq_inv _ reqs _ I1) as I1'.
-    pose proof (promote_seq_perm_inv _ reqs _ _ I1 P1) as P1'.
-    split.
-    + apply filter_perm; [|exact P1'].
-      eapply Forall_impl; [|exact I1']. intros m [_ O].
-      eapply env_ok_needs_point_on. exact O.
-    + apply filter_inv. exact I1'.
-  - (* union *)
-    destruct Hwf as [Hwf1 Hwf2].
-    destruct (IH1 Hwf1 HwfC HP) as [P1 I1]. destruct (IH2 Hwf2 HwfC HP) as [P2 I2].
-    rewrite translate_union. cbn [fst snd eval_flat eval_cond]. split.
-    + rewrite flat_map_app. apply Permutation_app; assumption.
-    + apply union_inv; assumption.
-  - (* difference *)
-    destruct Hwf as [Hwf1 Hwf2].
-    destruct (IH1 Hwf1 HwfC HP) as [P1 I1]. destruct (IH2 Hwf2 HwfC HP) as [P2 I2].
-    rewrite translate_diff. cbn [fst snd eval_flat eval_cond].
-    set (reqs1 := needs (snd (translate e1)) (expr_vars c) Value).
-    set (reqs2 := needs (snd (translate e2)) (expr_vars c) Value).
-    pose proof (promote_seq_inv _ reqs1 _ I1) as I1'.
-    pose proof (promote_seq_perm_inv _ reqs1 _ _ I1 P1) as P1'.
-    pose proof (promote_seq_inv _ reqs2 _ I2) as I2'.
-    pose proof (promote_seq_perm_inv _ reqs2 _ _ I2 P2) as P2'.
-    split.
-    + apply diff_cond_perm;
-        [apply (inv_wf _ _ I1') | apply (inv_wf _ _ I2') | | exact P1' | exact P2'].
-      intros m1 m2 Hm1 Hm2. rewrite Forall_forall in I1', I2'.
-      destruct (I1' m1 Hm1) as [_ O1]. destruct (I2' m2 Hm2) as [_ O2].
-      apply merge_cond_point_on; eapply env_ok_needs_point_on; eassumption.
-    + apply diff_inv. exact I1'.
-  - (* optional *)
-    destruct Hwf as [Hwf1 Hwf2].
-    destruct (IH1 Hwf1 HwfC HP) as [P1 I1]. destruct (IH2 Hwf2 HwfC HP) as [P2 I2].
-    rewrite translate_optional. cbn [fst snd eval_flat eval_cond].
-    set (reqs1 := needs (snd (translate e1)) (expr_vars c) Value).
-    set (reqs2 := needs (snd (translate e2)) (expr_vars c) Value).
-    pose proof (promote_seq_inv _ reqs1 _ I1) as I1'.
-    pose proof (promote_seq_perm_inv _ reqs1 _ _ I1 P1) as P1'.
-    pose proof (promote_seq_inv _ reqs2 _ I2) as I2'.
-    pose proof (promote_seq_perm_inv _ reqs2 _ _ I2 P2) as P2'.
-    assert (Q1 : Forall (fun m => point_on (expr_vars c) m) (promote_seq reqs1 (eval_cond (fst (translate e1)) dC))).
-    { eapply Forall_impl; [|exact I1']. intros m [_ O]. eapply env_ok_needs_point_on. exact O. }
-    assert (Q2 : Forall (fun m => point_on (expr_vars c) m) (promote_seq reqs2 (eval_cond (fst (translate e2)) dC))).
-    { eapply Forall_impl; [|exact I2']. intros m [_ O]. eapply env_ok_needs_point_on. exact O. }
-    split.
-    + apply optional_perm; [apply (inv_wf _ _ I1') | apply (inv_wf _ _ I2') | exact Q1 | exact Q2 | exact P1' | exact P2'].
-    + unfold optional_cond. apply Forall_app. split.
-      * apply filter_inv. apply Forall_forall. intros m Hm. eapply join_inv; eauto.
-      * eapply Forall_impl; [|apply diff_inv; exact I1']. intros m [W O]. split; [exact W|].
-        eapply env_ok_weaken; [apply env_meet_weaker_l | exact O].
-  - (* extend *)
-    destruct Hwf as [Hx Hwf]. destruct (IH Hwf HwfC HP) as [P1 I1].
-    rewrite translate_extend. cbn [fst snd eval_flat eval_cond].
-    set (reqs := needs (snd (translate e)) (expr_vars ex) Value).
-    pose proof (promote_seq_inv _ reqs _ I1) as I1'.
-    pose proof (promote_seq_perm_inv _ reqs _ _ I1 P1) as P1'.
-    split.
-    + apply extend_perm; [|exact P1'].
-      eapply Forall_impl; [|exact I1']. intros m [_ O].
-      eapply env_ok_needs_point_on. exact O.
-    + apply extend_inv; [|exact I1']. intros m Hm.
-      eapply (extend_fresh e x); [exact Hx | | exact I1' | exact Hm].
-      intros z Hz. apply translate_domain.
-      exact (proj1 (raise_needs_domain _ _ _ _) Hz).
-  - (* projection *)
-    destruct (IH Hwf HwfC HP) as [P1 I1].
-    rewrite translate_projection. cbn [fst snd eval_flat eval_cond].
-    set (reqs := needs (snd (translate e)) (dropped_vars (snd (translate e)) vars) Id).
-    pose proof (promote_seq_inv _ reqs _ I1) as I1'.
-    pose proof (promote_seq_perm_inv _ reqs _ _ I1 P1) as P1'.
-    split.
-    + apply projection_perm; [|exact P1'].
-      eapply Forall_impl; [|exact I1']. intros m Hm.
-      apply (projection_point _ vars m Hm).
-    + apply projection_inv. exact I1'.
+  intros e dF dC Hwf HwfC HP.
+  pose proof (typed_correct _ _ dF dC (translate_typed e Hwf) HwfC HP) as H.
+  rewrite erase_translate in H. exact H.
 Qed.
 
 (** ** Main statements *)
 
-(** Theorem 6.2 (Evaluation Equivalence), with the model correspondence
-    of Theorem 6.1 as hypothesis: the flat evaluation of e and the
+(** Theorem 6.2 (Evaluation Equivalence) for an arbitrary well-typed
+    condensed expression, with the model correspondence of Theorem 6.1 as
+    hypothesis. *)
+Theorem typed_evaluation_equivalence : forall ec env dF dC,
+  typed ec env -> wf_condensed_model dC ->
+  NoDup dF -> models_correspond dF dC ->
+  Permutation (eval_flat (erase ec) dF) (flat_map expand (eval_cond ec dC)).
+Proof.
+  intros ec env dF dC T HwfC Hnd Hcorr.
+  apply (typed_correct ec env dF dC T HwfC).
+  apply models_correspond_Permutation; assumption.
+Qed.
+
+(** Type soundness: the results of a well-typed expression are well-formed
+    and respect the environment of the judgement. *)
+Theorem type_soundness : forall ec env dC,
+  typed ec env -> wf_condensed_model dC ->
+  Forall (fun m => wf_cmap m /\ env_ok env m) (eval_cond ec dC).
+Proof.
+  intros ec env dC T HwfC.
+  exact (proj2 (typed_correct ec env (flatten dC) dC T HwfC (Permutation_refl _))).
+Qed.
+
+(** Theorem 6.2 for the translation τ: the flat evaluation of e and the
     expansion of the condensed evaluation of τ(e) are the same bag. *)
 Theorem evaluation_equivalence : forall e dF dC,
   wf_flat_expr e -> wf_condensed_model dC ->
