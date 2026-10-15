@@ -1,194 +1,193 @@
-(** * Translation: Flat to Condensed Algebra Translation
-    
-    This module defines the translation function τ that converts
-    flat algebra expressions to condensed algebra expressions.
+(** * Translation: From the Flat Algebra to the Condensed Algebra
+
+    Thesis, Section 5.5 (translation function τ and optimal
+    representation function R-star, Definitions 5.40–5.41).
+
+    [translate e] returns the condensed expression τ(e) together with its
+    result environment R(e).  The environment records, for every variable
+    that may be bound, the least representation its bindings can have.
+    A promotion Υ is inserted before every operator that needs
+    point-valued variables:
+    - FILTER, BIND and the conditions of DIFF and OPTIONAL need the
+      variables of their expression in ν;
+    - PROJECTION needs the variables it drops in ι (or above): dropping
+      a ζ variable would otherwise lose the multiplicity of its versions
+      (see Equivalence.v, [projection_perm]).  This requirement is
+      missing from the thesis's rule for Π_C.
 *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List Bool.
 Require Import ConVerG.RDF.
+Require Import ConVerG.ListUtil.
 Require Import ConVerG.Versioning.
 Require Import ConVerG.Representations.
 Require Import ConVerG.Environments.
+Require Import ConVerG.SolutionMappings.
+Require Import ConVerG.Expressions.
+Require Import ConVerG.Typing.
 Require Import ConVerG.FlatAlgebra.
 Require Import ConVerG.CondensedAlgebra.
 Import ListNotations.
 
-(** ** Value Translation *)
+(** The environment of a quad pattern: s, p, o in ι and the graph
+    variable in ζ (Definition 5.38, rule for QP_C). *)
+Definition pat_env (s p o : PatTerm) (g : Var) : Environment :=
+  map (fun x => (x, Id)) (pat_vars s ++ pat_vars p ++ pat_vars o)
+  ++ [(g, Condensed)].
 
-(** Translation between representation values.
-    τ_{r → r'}(value(r)) returns the set of values in representation r'
-    that correspond to the value in representation r.
-    
-    - UnboundGraph → Condensed: { (n, V) | id_to_val(n) ∈ NamedGraphs, V ⊆ versions(d) }
-    - Condensed → Id: { n' | ∀v ∈ V, VI(v, id_to_val(n)) = id_to_val(n') }
-    - Id → Value: { id_to_val(n) }
-*)
+(** The variables of [env] that are not projected. *)
+Definition dropped_vars (env : Environment) (vars : list Var) : list Var :=
+  filter (fun y => negb (memb y vars)) (env_domain env).
 
-(** Placeholder for id-to-value conversion function. *)
-Parameter id_to_val : nat -> Term.
-
-(** Translate from UnboundGraph to Condensed. *)
-Definition translate_unboundgraph_to_condensed : list CondensedValue :=
-  []. (* Would enumerate all (graph, all_versions) pairs *)
-
-(** Translate from Condensed to Id. *)
-Definition translate_condensed_to_id (cv : CondensedValue) : list nat :=
-  let (g, vs) := cv in
-  []. (* Would compute versioned IRI ids for each version *)
-
-(** Translate from Id to Value. *)
-Definition translate_id_to_value (id : nat) : list Term :=
-  [id_to_val id].
-
-(** ** Type Downgrade *)
-
-(** Downgrade a variable's representation in a mapping.
-    ↓^{var}_{Γ → Γ'}(m) returns the list of mappings where
-    variable var is reduced from Γ(var) to Γ'(var).
-*)
-
-(** Placeholder mapping type *)
-Definition MappingEntry := (Var * (Representation * nat))%type.
-Definition Mapping := list MappingEntry.
-
-(** Downgrade function for a single variable. *)
-Definition downgrade_var (x : Var) 
-                         (r_from r_to : Representation) 
-                         (m : Mapping) : list Mapping :=
-  (* Would apply value translation and produce multiple mappings *)
-  [m]. (* Placeholder *)
-
-(** ** Solution Sequence Translation *)
-
-(** Translate a solution sequence from one environment to another.
-    ↓^{var}_{Γ → Γ'}(seq) = ⋃_{m ∈ seq} downgrade(m)
-*)
-Definition translate_solution_seq (x : Var)
-                                  (env_from env_to : Environment)
-                                  (seq : list Mapping) : list Mapping :=
-  flat_map (fun m =>
-    match env_lookup x env_from, env_lookup x env_to with
-    | Some r1, Some r2 => downgrade_var x r1 r2 m
-    | _, _ => [m]
-    end) seq.
-
-(** ** Environment Transformation *)
-
-(** The environment transformation function composes all necessary
-    variable representation transformations.
-    
-    ↓_r(Γ, Γ') = ○_{x : Γ(x) ≠ Γ'(x)} ↓^x_{Γ → Γ'}
-*)
-Definition transform_env (env_from env_to : Environment) 
-                         (e : CondensedExpr) : CondensedExpr :=
-  TransformRepr env_from env_to e.
-
-(** ** Optimal Representation for Flat Expressions *)
-
-(** Compute the optimal representation environment for a flat expression.
-    R*(e) = ⊓ { Γ | Γ ⊢ e }
-*)
-Fixpoint optimal_repr_flat (e : FlatExpr) : Environment :=
+Fixpoint translate (e : FlatExpr) : CondExpr * Environment :=
   match e with
-  | QuadPatternF s p o g =>
-      [(s, Id); (p, Id); (o, Id); (g, Condensed)]
-      
+  | QuadPatternF s p o g => (QuadPatternC s p o g, pat_env s p o g)
   | JoinF e1 e2 =>
-      (* Meet of both subexpressions' optimal representations *)
-      lower_env [optimal_repr_flat e1; optimal_repr_flat e2]
-      
+      let (c1, env1) := translate e1 in
+      let (c2, env2) := translate e2 in
+      (JoinC c1 c2, env_meet env1 env2)
   | FilterF c e =>
-      (* Filter variables need Value representation *)
-      let base := optimal_repr_flat e in
-      fold_right (fun x acc => env_update x Value acc) base (expr_vars c)
-      
+      let (c1, env1) := translate e in
+      let reqs := needs env1 (expr_vars c) Value in
+      (FilterC c (TransformReprC reqs c1), env_raise env1 reqs)
   | UnionF e1 e2 =>
-      lower_env [optimal_repr_flat e1; optimal_repr_flat e2]
-      
+      let (c1, env1) := translate e1 in
+      let (c2, env2) := translate e2 in
+      (UnionC c1 c2, env_meet env1 env2)
   | DiffF e1 e2 c =>
-      let base := lower_env [optimal_repr_flat e1; optimal_repr_flat e2] in
-      fold_right (fun x acc => env_update x Value acc) base (expr_vars c)
-      
+      let (c1, env1) := translate e1 in
+      let (c2, env2) := translate e2 in
+      let reqs1 := needs env1 (expr_vars c) Value in
+      let reqs2 := needs env2 (expr_vars c) Value in
+      (DiffC (TransformReprC reqs1 c1) (TransformReprC reqs2 c2) c,
+       env_raise env1 reqs1)
   | OptionalF e1 e2 c =>
-      let base := lower_env [optimal_repr_flat e1; optimal_repr_flat e2] in
-      fold_right (fun x acc => env_update x Value acc) base (expr_vars c)
-      
-  | GroupF exprs e =>
-      let base := optimal_repr_flat e in
-      fold_right (fun exp acc => 
-        fold_right (fun x acc' => env_update x Value acc') acc (expr_vars exp)
-      ) base exprs
-      
-  | AggregationF exprs _ e =>
-      let base := optimal_repr_flat e in
-      fold_right (fun exp acc =>
-        fold_right (fun x acc' => env_update x Value acc') acc (expr_vars exp)
-      ) base exprs
-      
-  | AggregateJoinF aggs =>
-      lower_env (map optimal_repr_flat aggs)
-      
-  | ProjectionF e _ =>
-      optimal_repr_flat e
-  end.
-
-(** ** Main Translation Function *)
-
-(** The translation function τ: A_F → A_C converts flat algebra
-    expressions to condensed algebra expressions.
-*)
-Fixpoint translate (e : FlatExpr) : CondensedExpr :=
-  match e with
-  (** Quad Pattern: τ(QP_F) = QP_C *)
-  | QuadPatternF s p o g =>
-      QuadPatternC s p o g
-      
-  (** Join: τ(⋈_F(e1, e2)) = ⋈_C(↓(τ(e1)), ↓(τ(e2)))
-      where ↓ promotes to the optimal representation. *)
-  | JoinF e1 e2 =>
-      let env := optimal_repr_flat (JoinF e1 e2) in
-      let e1' := transform_env (optimal_repr_flat e1) env (translate e1) in
-      let e2' := transform_env (optimal_repr_flat e2) env (translate e2) in
-      JoinC e1' e2'
-      
-  (** Filter: τ(σ_F(E, c)) = σ_C(E, τ(c)) *)
-  | FilterF c e =>
-      FilterC c (translate e)
-      
-  (** Union: τ(∪_F(e1, e2)) = ∪_C(↓(τ(e1)), ↓(τ(e2))) *)
-  | UnionF e1 e2 =>
-      let env := optimal_repr_flat (UnionF e1 e2) in
-      let e1' := transform_env (optimal_repr_flat e1) env (translate e1) in
-      let e2' := transform_env (optimal_repr_flat e2) env (translate e2) in
-      UnionC e1' e2'
-      
-  (** Diff: τ(\\_F(e1, e2, c)) = \\_C(↓(τ(e1)), ↓(τ(e2)), c) *)
-  | DiffF e1 e2 c =>
-      let env := optimal_repr_flat (DiffF e1 e2 c) in
-      let e1' := transform_env (optimal_repr_flat e1) env (translate e1) in
-      let e2' := transform_env (optimal_repr_flat e2) env (translate e2) in
-      DiffC e1' e2' c
-      
-  (** Optional: τ(⟕_F(e1, e2, c)) = ⟕_C(↓(τ(e1)), ↓(τ(e2)), c) *)
-  | OptionalF e1 e2 c =>
-      let env := optimal_repr_flat (OptionalF e1 e2 c) in
-      let e1' := transform_env (optimal_repr_flat e1) env (translate e1) in
-      let e2' := transform_env (optimal_repr_flat e2) env (translate e2) in
-      OptionalC e1' e2' c
-      
-  (** Group: τ(Gr_F(exprs, e)) = Gr_C(↓(exprs), τ(e)) *)
-  | GroupF exprs e =>
-      GroupC exprs (translate e)
-      
-  (** Aggregation: τ(Agg_F(exprs, f, s, g)) = Agg_C(↓(exprs), τ(f), s, τ(g)) *)
-  | AggregationF exprs agg grp =>
-      AggregationC exprs agg (translate grp)
-      
-  (** Aggregate Join: τ(AggJ_F(a1, ..., an)) = AggJ_C(τ(a1), ..., τ(an)) *)
-  | AggregateJoinF aggs =>
-      AggregateJoinC (map translate aggs)
-      
-  (** Projection: τ(Π_F(e, vars)) = Π_C(τ(e), vars) *)
+      let (c1, env1) := translate e1 in
+      let (c2, env2) := translate e2 in
+      let reqs1 := needs env1 (expr_vars c) Value in
+      let reqs2 := needs env2 (expr_vars c) Value in
+      (OptionalC (TransformReprC reqs1 c1) (TransformReprC reqs2 c2) c,
+       env_meet (env_raise env1 reqs1) (env_raise env2 reqs2))
+  | ExtendF x ex e =>
+      let (c1, env1) := translate e in
+      let reqs := needs env1 (expr_vars ex) Value in
+      (ExtendC x ex (TransformReprC reqs c1),
+       (x, Value) :: env_raise env1 reqs)
   | ProjectionF e vars =>
-      ProjectionC (translate e) vars
+      let (c1, env1) := translate e in
+      let reqs := needs env1 (dropped_vars env1 vars) Id in
+      (ProjectionC (TransformReprC reqs c1) vars,
+       env_restrict (env_raise env1 reqs) vars)
   end.
+
+(** τ(e) and R(e). *)
+Definition translate_expr (e : FlatExpr) : CondExpr := fst (translate e).
+Definition result_env (e : FlatExpr) : Environment := snd (translate e).
+
+(** Unfolding equations of [translate], one per operator. *)
+
+Lemma translate_qp : forall s p o g,
+  translate (QuadPatternF s p o g) = (QuadPatternC s p o g, pat_env s p o g).
+Proof. reflexivity. Qed.
+
+Lemma translate_join : forall e1 e2,
+  translate (JoinF e1 e2) =
+  (JoinC (fst (translate e1)) (fst (translate e2)),
+   env_meet (snd (translate e1)) (snd (translate e2))).
+Proof.
+  intros e1 e2. simpl. destruct (translate e1), (translate e2). reflexivity.
+Qed.
+
+Lemma translate_filter : forall c e,
+  translate (FilterF c e) =
+  (FilterC c (TransformReprC (needs (snd (translate e)) (expr_vars c) Value)
+                             (fst (translate e))),
+   env_raise (snd (translate e)) (needs (snd (translate e)) (expr_vars c) Value)).
+Proof. intros c e. simpl. destruct (translate e). reflexivity. Qed.
+
+Lemma translate_union : forall e1 e2,
+  translate (UnionF e1 e2) =
+  (UnionC (fst (translate e1)) (fst (translate e2)),
+   env_meet (snd (translate e1)) (snd (translate e2))).
+Proof.
+  intros e1 e2. simpl. destruct (translate e1), (translate e2). reflexivity.
+Qed.
+
+Lemma translate_diff : forall e1 e2 c,
+  translate (DiffF e1 e2 c) =
+  (DiffC (TransformReprC (needs (snd (translate e1)) (expr_vars c) Value)
+                         (fst (translate e1)))
+         (TransformReprC (needs (snd (translate e2)) (expr_vars c) Value)
+                         (fst (translate e2))) c,
+   env_raise (snd (translate e1)) (needs (snd (translate e1)) (expr_vars c) Value)).
+Proof.
+  intros e1 e2 c. simpl. destruct (translate e1), (translate e2). reflexivity.
+Qed.
+
+Lemma translate_optional : forall e1 e2 c,
+  translate (OptionalF e1 e2 c) =
+  (OptionalC (TransformReprC (needs (snd (translate e1)) (expr_vars c) Value)
+                             (fst (translate e1)))
+             (TransformReprC (needs (snd (translate e2)) (expr_vars c) Value)
+                             (fst (translate e2))) c,
+   env_meet
+     (env_raise (snd (translate e1)) (needs (snd (translate e1)) (expr_vars c) Value))
+     (env_raise (snd (translate e2)) (needs (snd (translate e2)) (expr_vars c) Value))).
+Proof.
+  intros e1 e2 c. simpl. destruct (translate e1), (translate e2). reflexivity.
+Qed.
+
+Lemma translate_extend : forall x ex e,
+  translate (ExtendF x ex e) =
+  (ExtendC x ex (TransformReprC (needs (snd (translate e)) (expr_vars ex) Value)
+                                (fst (translate e))),
+   (x, Value) :: env_raise (snd (translate e))
+                           (needs (snd (translate e)) (expr_vars ex) Value)).
+Proof. intros x ex e. simpl. destruct (translate e). reflexivity. Qed.
+
+Lemma translate_projection : forall e vars,
+  translate (ProjectionF e vars) =
+  (ProjectionC (TransformReprC
+                  (needs (snd (translate e)) (dropped_vars (snd (translate e)) vars) Id)
+                  (fst (translate e))) vars,
+   env_restrict
+     (env_raise (snd (translate e))
+                (needs (snd (translate e)) (dropped_vars (snd (translate e)) vars) Id))
+     vars).
+Proof. intros e vars. simpl. destruct (translate e). reflexivity. Qed.
+
+(** The result environment only mentions in-scope variables. *)
+Lemma translate_domain : forall e z,
+  In z (env_domain (snd (translate e))) -> In z (flat_expr_vars e).
+Proof.
+  induction e as [s p o g | e1 IH1 e2 IH2 | c e IH | e1 IH1 e2 IH2
+                  | e1 IH1 e2 IH2 c | e1 IH1 e2 IH2 c | x ex e IH | e IH vars];
+    intros z Hz; cbn [flat_expr_vars].
+  - rewrite translate_qp in Hz. cbn [snd] in Hz.
+    unfold pat_env, env_domain in Hz. rewrite map_app, map_map in Hz.
+    cbn [fst map] in Hz. rewrite map_id in Hz. unfold quad_pat_vars.
+    rewrite <- !app_assoc in Hz. exact Hz.
+  - rewrite translate_join in Hz. cbn [snd] in Hz.
+    apply env_meet_domain in Hz. apply in_app_iff.
+    destruct Hz as [Hz | Hz]; [left; apply IH1 | right; apply IH2]; exact Hz.
+  - rewrite translate_filter in Hz. cbn [snd] in Hz.
+    apply IH. exact (proj1 (raise_needs_domain _ _ _ _) Hz).
+  - rewrite translate_union in Hz. cbn [snd] in Hz.
+    apply env_meet_domain in Hz. apply in_app_iff.
+    destruct Hz as [Hz | Hz]; [left; apply IH1 | right; apply IH2]; exact Hz.
+  - rewrite translate_diff in Hz. cbn [snd] in Hz.
+    apply IH1. exact (proj1 (raise_needs_domain _ _ _ _) Hz).
+  - rewrite translate_optional in Hz. cbn [snd] in Hz.
+    apply env_meet_domain in Hz. apply in_app_iff.
+    destruct Hz as [Hz | Hz].
+    + left. apply IH1. exact (proj1 (raise_needs_domain _ _ _ _) Hz).
+    + right. apply IH2. exact (proj1 (raise_needs_domain _ _ _ _) Hz).
+  - rewrite translate_extend in Hz. cbn [snd] in Hz.
+    destruct Hz as [<- | Hz]; [left; reflexivity|].
+    right. apply IH. exact (proj1 (raise_needs_domain _ _ _ _) Hz).
+  - rewrite translate_projection in Hz. cbn [snd] in Hz.
+    unfold env_restrict, env_domain in Hz.
+    apply in_map_iff in Hz. destruct Hz as [[y r] [<- Hy]].
+    apply filter_In in Hy. destruct Hy as [_ Hy]. cbn [fst] in Hy.
+    apply inb_true_iff in Hy. exact Hy.
+Qed.

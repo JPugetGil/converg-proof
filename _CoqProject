@@ -2,6 +2,7 @@
 
 # Core types
 RDF.v
+ListUtil.v
 Versioning.v
 Models.v
 
@@ -9,15 +10,19 @@ Models.v
 Representations.v
 Environments.v
 
+# Solution mappings and their operations
+SolutionMappings.v
+Expressions.v
+Promotion.v
+Difference.v
+Typing.v
+
 # Algebra
 FlatAlgebra.v
 CondensedAlgebra.v
-Translation.v
-
-# Evaluation
-SolutionMappings.v
 FlatEvaluation.v
 CondensedEvaluation.v
+Translation.v
 
 # Main theorem
 Equivalence.v
