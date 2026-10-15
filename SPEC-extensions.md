@@ -41,18 +41,30 @@ exactement une version, par injectivité de `VI`), `qp_perm` (sous
 `wf_condensed_model dC`), `qp_inv` ; donc `evaluation_equivalence`
 (Théorème 6.2) pour toute position graphe.
 
-### Écart avec la thèse
+### Écart avec la thèse (validé par l'auteur le 2026-10-15)
 
 Les Définitions 5.9 et 5.24 comparent la constante `t_g` avec le nom de graphe
-`g` (« `t_g = d_g` avec `d_g = g` »). Avec cette lecture, pour un nom de graphe
-`ex:park`, l'évaluation plate produit une solution **par version** et
-l'évaluation condensée une seule solution (sans liaison ζ, cardinalité 1) :
+`g` (« `t_g = d_g` avec `d_g = g` »). Avec cette lecture, pour
+`GRAPH ex:park { ?s rdf:type ex:House }` sur les Tables 5.1/5.3, l'évaluation
+plate produit le sac `{H1, H1, H2}` (une solution **par version**) et
+l'évaluation condensée le sac `{H1, H2}` (sans liaison ζ, cardinalité 1) :
 le Théorème 6.2 est faux en sémantique de sacs. La lecture retenue — la
 constante est une IRI versionnée, comparée à `VI(v, g)` — est celle de
-l'Exemple 5.14 (`GRAPH <vi:park-v1>`) et de `vi-restr` (Déf. 5.40). Les
-restrictions multi-versions (`vngs-of`, `vngs-in`, Déf. 5.41–5.42) doivent
-passer par une variable graphe (jointure avec les métadonnées, Exemples
-5.15–5.16), jamais par une constante.
+l'Exemple 5.14 (`GRAPH <vi:park-v1>`) et de `vi-restr` (Déf. 5.40) ; dans le
+modèle plat, les graphes nommés *sont* les IRI versionnées (cas variable de la
+Déf. 5.9, entités PROV-O de la Table 5.2). Les restrictions multi-versions
+(`vngs-of`, `vngs-in`, Déf. 5.41–5.42) passent par une variable graphe
+(jointure avec les métadonnées, Exemples 5.15–5.16), jamais par une constante.
+
+Correction du texte retenue :
+
+* Déf. 5.9 : remplacer « `(d_s, d_p, d_o, d_g) = (s, p, o, g)` » par
+  « `(d_s, d_p, d_o, d_g) = (s, p, o, VI(v, g))` » ; les deux cas deviennent
+  uniformes (`t_g ∉ VAR ⇒ t_g = VI(v, g)`, `t_g ∈ VAR ⇒ m(t_g) = VI(v, g)`) et
+  la ligne spéciale pour `t_g ∈ VAR` disparaît.
+* Déf. 5.24 : « `t_g ∉ VAR ⇒ VI⁻¹_g(t_g) = g ∧ VI⁻¹_v(t_g) ∈ d_C(s, p, o, g)` »,
+  plus une remarque : une constante en position graphe est une IRI versionnée ;
+  une restriction multi-versions passe par une variable ζ.
 
 ---
 
@@ -139,21 +151,27 @@ si les deux côtés sont ψ ; les cas mixtes exigent l'intersection.
   la solution `key_mapping ks k ++ agg_bindings`, où la valeur de
   l'agrégat `i` est `agg_apply f_i (map (eval e_i) membres)`.
 * **Évaluation condensée (`groupagg_cond`, count-views, Déf. 5.38–5.39).**
-  Même forme, mais chaque mapping condensé `m` du groupe contribue
-  `eval e_i m` répété `card(m)` fois (`values_c`) ; les liaisons produites
-  sont ν (`to_vals`). `COUNT_C = Σ card(m)` (Déf. 5.39) est le lemme
-  `count_values_c`.
+  Chaque mapping condensé `m` du groupe contribue `eval e_i m` répété
+  `card(m)` fois (`values_c`) ; les variables d'agrégat sont liées en ν
+  (`to_vals`) ; les variables de `ks` reçoivent la liaison d'un membre
+  représentant du groupe (le premier, `key_bindings_c`) et **gardent donc
+  leur représentation** (ι reste ι, Tableau 5.8) : la clé est comparée sur
+  les valeurs décodées, ce qui équivaut à comparer les identifiants, mais
+  aucun décodage n'est matérialisé. `COUNT_C = Σ card(m)` (Déf. 5.39) est le
+  lemme `count_values_c`.
 * **Typage (Déf. 5.44, règles Group / Aggregation).** `TyGroupAgg` :
   variables de `ks` au moins ι ; variables des `e_i` aux représentations de
   `cond_reqs` (ν sous une fonction) ; `ks` sans doublon, variables résultat
   deux à deux distinctes et hors de `ks`. Environnement résultat
-  `groupagg_env` : `ks ∩ D(Γ)` et les variables résultat en ν.
+  `groupagg_env` : Γ restreint à `ks` (règle Group : Γ inchangé) et les
+  variables résultat en ν.
 * **Traduction.** `τ(GroupAggF ks aggs e) = GroupAggC ks aggs (Υ_reqs τ(e))`
   avec `reqs = needs_reqs R(e) (groupagg_reqs ks aggs)`.
 
 ### Énoncés prouvés
 
-`key_expand` (Lemme 6.3 sur les clés), `values_perm` (Lemme 6.7 : le sac
+`key_expand` (Lemme 6.3 sur les clés), `expand_key_bindings` (les liaisons
+du représentant s'expansent en la clé), `values_perm` (Lemme 6.7 : le sac
 pondéré est une permutation du sac plat), `group_members_perm`,
 `group_keys_perm`, **`groupagg_perm`** : si `L ≅ Ξ(M)`, `M` bien formé,
 `ks` point-valuées et les variables des `e_i` point-valuées dans `M`, alors
@@ -169,10 +187,9 @@ pondéré est une permutation du sac plat), `group_members_perm`,
   plat (Lemme 6.7 + Lemme 6.3). Les formules `SUM_C = Σ card(m)·x_m` et
   `AVG_C` en découlent dès que l'arithmétique est un monoïde commutatif.
 * Les variables de regroupement n'ont besoin que de ι (comparaison
-  d'identifiants, décodés ici par `lk_c`) ; la formalisation lie les clés du
-  résultat en ν, ce qui ne perd rien (ν est la représentation la plus
-  informative) et évite de paramétrer l'opérateur par Γ. Le Tableau 5.8 les
-  laisse en ι : à arbitrer.
+  d'identifiants) ; conformément au Tableau 5.8 et à la règle Group
+  (Γ inchangé), elles conservent leur représentation dans le résultat
+  (décision de l'auteur du 2026-10-15).
 
 ---
 
@@ -256,12 +273,13 @@ opérateurs de `e`.
 
 ---
 
-## Questions à l'auteur
+## Décisions de l'auteur (2026-10-15)
 
-1. ψ : confirmer que `GRAPH ?x { }` (ou un équivalent dans QuaQue) est bien
-   la source de la représentation ψ, et accepter le facteur `Σ_g |V_g|` à
-   la place de `|VA|·|G_N|` (Déf. 5.39, Lemme 6.7).
-2. Graphe constant : accepter la lecture « IRI versionnée » des Déf. 5.9 et
-   5.24, ou préciser que la constante doit être une IRI versionnée.
-3. Egalité (Déf. 5.43) : « même représentation » ou « au moins ι » ?
-4. Clés de regroupement en ν dans le résultat (Tableau 5.8 : ι) — à arbitrer.
+1. ψ : `GRAPH ?x { }` est la source de ψ et le facteur est `Σ_g |V_g|` —
+   validé.
+2. Graphe constant : lecture « IRI versionnée » et correction du texte des
+   Déf. 5.9 et 5.24 (section 1) — validé.
+3. Égalité (Déf. 5.43) : « au moins ι » — validé ; c'est la règle `ETEq`.
+4. Clés de regroupement : elles conservent la représentation d'entrée
+   (règle Group, Tableau 5.8) — validé et implémenté (`key_bindings_c`,
+   `groupagg_env` = Γ restreint à `ks`).

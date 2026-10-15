@@ -52,11 +52,11 @@ Definition groupagg_reqs (ks : list Var) (aggs : list Aggregate)
   map (fun x => (x, Id)) ks ++ flat_map (fun ag => cond_reqs (agg_expr ag)) aggs.
 
 (** The environment of the solutions of a GROUP BY: the grouping variables
-    that may be bound and the aggregate variables, all in ν. *)
+    keep their representation (Γ restricted to [ks], rule Group of
+    Definition 5.44) and the aggregate variables are in ν. *)
 Definition groupagg_env (env : Environment) (ks : list Var)
   (aggs : list Aggregate) : Environment :=
-  map (fun x => (x, Value)) (filter (fun x => in_env_domain x env) ks)
-  ++ map (fun ag => (agg_var ag, Value)) aggs.
+  env_restrict env ks ++ map (fun ag => (agg_var ag, Value)) aggs.
 
 Fixpoint translate (e : FlatExpr) : CondExpr * Environment :=
   match e with
@@ -201,10 +201,11 @@ Lemma groupagg_env_domain : forall env ks aggs z,
   In z ks \/ In z (map agg_var aggs).
 Proof.
   intros env ks aggs z Hz. unfold groupagg_env, env_domain in Hz.
-  rewrite map_app, !map_map in Hz. cbn [fst] in Hz. apply in_app_iff in Hz.
-  destruct Hz as [Hz | Hz].
-  - left. rewrite map_id in Hz. apply filter_In in Hz. tauto.
-  - right. exact Hz.
+  rewrite map_app, map_map in Hz. cbn [fst] in Hz. apply in_app_iff in Hz.
+  destruct Hz as [Hz | Hz]; [left | right; exact Hz].
+  unfold env_restrict in Hz. apply in_map_iff in Hz.
+  destruct Hz as [[y r] [<- Hy]]. apply filter_In in Hy. destruct Hy as [_ Hy].
+  cbn [fst] in Hy. apply inb_true_iff in Hy. exact Hy.
 Qed.
 
 (** The result environment only mentions in-scope variables. *)

@@ -500,28 +500,13 @@ Qed.
 
 (** ** Grouping and aggregation *)
 
-Lemma env_lookup_map_value : forall x l (rest : Environment),
-  In x l ->
-  env_lookup x (map (fun y => (y, Value)) l ++ rest) = Some Value.
+Lemma lookup_agg_value : forall y (aggs : list Aggregate),
+  In y (map agg_var aggs) ->
+  lookup y (map (fun ag => (agg_var ag, Value)) aggs) = Some Value.
 Proof.
-  intros x l rest Hx. rewrite env_lookup_eq, lookup_app.
-  induction l as [|y l IH]; simpl; [contradiction|].
-  destruct (Var_eq_dec x y) as [-> | Hneq]; [reflexivity|].
-  apply IH. destruct Hx as [Hx | Hx]; [congruence | exact Hx].
-Qed.
-
-Lemma env_lookup_map_value_r : forall x l (aggs : list Aggregate),
-  ~ In x l -> In x (map agg_var aggs) ->
-  env_lookup x (map (fun y => (y, Value)) l
-                ++ map (fun ag => (agg_var ag, Value)) aggs) = Some Value.
-Proof.
-  intros x l aggs Hnot Hx. rewrite env_lookup_eq, lookup_app.
-  assert (E : lookup x (map (fun y => (y, Value)) l) = None).
-  { apply lookup_None_iff. unfold keys. rewrite map_map. cbn [fst].
-    rewrite map_id. exact Hnot. }
-  rewrite E. induction aggs as [|ag aggs IH]; simpl; [contradiction|].
-  destruct (Var_eq_dec x (agg_var ag)) as [-> | Hneq]; [reflexivity|].
-  apply IH. destruct Hx as [Hx | Hx]; [congruence | exact Hx].
+  intros y aggs Hy. induction aggs as [|ag aggs IH]; simpl; [contradiction|].
+  destruct (Var_eq_dec y (agg_var ag)) as [-> | Hneq]; [reflexivity|].
+  apply IH. destruct Hy as [Hy | Hy]; [congruence | exact Hy].
 Qed.
 
 Lemma groupagg_inv : forall env ks aggs M,
@@ -531,32 +516,49 @@ Lemma groupagg_inv : forall env ks aggs M,
 Proof.
   intros env ks aggs M H Hks Haggs Hdisj. apply Forall_forall. intros m' Hm'.
   unfold groupagg_cond in Hm'. apply in_map_iff in Hm'.
-  destruct Hm' as [[k members] [<- Hg]]. split.
-  - apply to_vals_wf. apply NoDup_keys_group_result; assumption.
-  - intros y b Hl. rewrite to_vals_lookup in Hl.
-    destruct (lookup y (group_result ks aggs values_c (k, members))) as [t|] eqn:El;
-      [|discriminate].
-    injection Hl as <-. exists Value. split; [|apply leq_repr_refl].
-    unfold group_result in El. cbn [fst snd] in El. rewrite lookup_app in El.
-    destruct (lookup y (key_mapping ks k)) as [t'|] eqn:Ek.
-    + (* a grouping variable, bound in the key *)
-      injection El as <-.
-      assert (Hy : In y ks)
-        by (apply (key_mapping_keys_incl ks k); eapply lookup_In_keys; eauto).
-      assert (Hdom : In y (env_domain env)).
-      { destruct (in_groups_key _ _ _ _ _ Hg) as [[-> ->] | [m [Hm <-]]].
-        - exfalso. unfold key_mapping in Ek. destruct ks; discriminate Ek.
-        - apply key_mapping_lookup_c in Ek. unfold lk_c in Ek.
-          destruct (lookup y m) as [b|] eqn:Eb; [|discriminate].
-          rewrite Forall_forall in H. destruct (H m Hm) as [_ O].
-          eapply env_ok_keys_domain; [exact O | eapply lookup_In_keys; eauto]. }
-      unfold groupagg_env. apply env_lookup_map_value. apply filter_In.
-      split; [exact Hy|]. unfold in_env_domain. apply inb_true_iff. exact Hdom.
+  destruct Hm' as [[k members] [<- Hg]].
+  assert (Hmem : forall m, In m members -> inv env m).
+  { intros m Hm. rewrite Forall_forall in H. apply H.
+    eapply in_groups_members; eauto. }
+  unfold group_result_c. cbn [fst snd]. split.
+  - (* well-formed *) split.
+    + rewrite keys_app, to_vals_keys. apply NoDup_app.
+      * apply NoDup_keys_key_bindings. exact Hks.
+      * apply NoDup_keys_agg_bindings. exact Haggs.
+      * intros x Hx1 Hx2. apply (Hdisj x);
+          [apply (agg_bindings_keys_incl _ _ _ Hx2)
+          | apply (key_bindings_keys_incl _ _ _ Hx1)].
+    + apply Forall_app. split.
+      * destruct members as [|m0 rest]; [constructor|].
+        apply Forall_forall. intros [y b] Hin. cbn [snd].
+        assert (Hl : lookup y (key_bindings_c ks (m0 :: rest)) = Some b).
+        { apply in_lookup_NoDup; [apply NoDup_keys_key_bindings; exact Hks | exact Hin]. }
+        apply key_bindings_lookup in Hl. destruct Hl as [_ Hl].
+        destruct (Hmem m0 (or_introl eq_refl)) as [W _]. eapply wf_cmap_lookup; eauto.
+      * apply Forall_forall. intros xb Hin. unfold to_vals in Hin.
+        apply in_map_iff in Hin. destruct Hin as [xt [<- _]]. exact I.
+  - (* environment *) intros y b Hl. rewrite lookup_app in Hl.
+    destruct (lookup y (key_bindings_c ks members)) as [b0|] eqn:Ek.
+    + (* a grouping variable: the binding of the representative *)
+      injection Hl as ->. destruct members as [|m0 rest]; [discriminate Ek|].
+      apply key_bindings_lookup in Ek. destruct Ek as [Hy Hl0].
+      destruct (Hmem m0 (or_introl eq_refl)) as [_ O].
+      destruct (O y b Hl0) as [r [Hr Hle]].
+      exists r. split; [|exact Hle]. unfold groupagg_env.
+      rewrite env_lookup_eq, lookup_app. unfold env_restrict.
+      rewrite lookup_filter_keep by (intros a; cbn [fst]; apply inb_true_iff; exact Hy).
+      rewrite env_lookup_eq in Hr. rewrite Hr. reflexivity.
     + (* an aggregate variable *)
+      rewrite to_vals_lookup in Hl.
+      destruct (lookup y (agg_bindings (values_c members) aggs)) as [t|] eqn:Ea;
+        [|discriminate].
+      injection Hl as <-. exists Value. split; [|apply leq_repr_refl].
       assert (Hy : In y (map agg_var aggs))
         by (eapply agg_bindings_keys_incl; eapply lookup_In_keys; eauto).
-      unfold groupagg_env. apply env_lookup_map_value_r; [|exact Hy].
-      intros Hin. apply filter_In in Hin. apply (Hdisj y Hy). tauto.
+      unfold groupagg_env. rewrite env_lookup_eq, lookup_app. unfold env_restrict.
+      rewrite lookup_filter_drop
+        by (intros a; cbn [fst]; apply inb_false_iff; apply Hdisj; exact Hy).
+      apply lookup_agg_value. exact Hy.
 Qed.
 
 (** ** Versioned named graphs (GRAPH ?x { }) *)

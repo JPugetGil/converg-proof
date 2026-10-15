@@ -151,7 +151,9 @@ functions `agg_apply`, functions of the bag of values (`agg_apply_perm`);
 8. **Grouping and aggregation.** `Gr`, `Agg` and `AggJ` are fused into one
    operator `GroupAggF ks aggs e`; an aggregate is any function of the bag
    of values; the condensed evaluation weights each mapping by `card(m)`
-   (count-views). The keys of the result are bound in ν.
+   (count-views). The grouping variables keep the bindings of a
+   representative member of the group, hence their representation (Table
+   5.8: ι stays ι); the aggregate variables are bound in ν.
 9. **Type system** (Def. 5.43, 5.44). Equality requires both operands at
    least at ι (the rule as written requires the same representation);
    Extend requires its expression at ι (rule) rather than ν (text); the

@@ -18,6 +18,13 @@
     expression [card(m)] times ([values_c]).  Equivalence then holds for
     every aggregate function at once, because the weighted bag is a
     permutation of the flat bag (Lemma 6.7 with Lemma 6.3).
+
+    In the condensed solution of a group, the grouping variables keep the
+    bindings (hence the representations) they have in the members of the
+    group (rule Group of Definition 5.44 leaves Γ unchanged; Table 5.8):
+    the key is compared on decoded values, which amounts to comparing
+    identifiers, but no decoding is materialized.  Aggregate variables are
+    bound in ν.
 *)
 
 From Stdlib Require Import List Permutation Bool PeanoNat Lia.
@@ -111,21 +118,20 @@ Proof.
   intros A key [|x ks] [|a L] H; try reflexivity. contradiction.
 Qed.
 
-(** A group is either the implicit empty group or has the key of one of
-    the elements. *)
-Lemma in_groups_key : forall {A : Type} (key : A -> Key) ks (L : list A) k members,
-  In (k, members) (groups key ks L) ->
-  (k = [] /\ members = []) \/ exists a, In a L /\ key a = k.
+(** The members of a group are elements of the input. *)
+Lemma in_groups_members : forall {A : Type} (key : A -> Key) ks (L : list A) k members a,
+  In (k, members) (groups key ks L) -> In a members -> In a L.
 Proof.
-  intros A key ks L k members Hin.
-  destruct L as [|a L].
+  intros A key ks L k members a Hin Ha.
+  destruct L as [|a0 L].
   - destruct ks as [|x ks]; simpl in Hin.
-    + destruct Hin as [Heq | []]. injection Heq as <- <-. left. auto.
+    + destruct Hin as [Heq | []]. injection Heq as _ <-. contradiction.
     + contradiction.
   - rewrite groups_nonempty in Hin by discriminate. unfold group_by in Hin.
-    apply in_map_iff in Hin. destruct Hin as [k' [Heq Hk']].
-    injection Heq as <- <-. rewrite nodup_In, in_map_iff in Hk'.
-    destruct Hk' as [a' [<- Ha']]. right. exists a'. auto.
+    apply in_map_iff in Hin. destruct Hin as [k' [Heq _]].
+    injection Heq as _ <-.
+    assert (Hf : In a (filter (fun a => key_eqb (key a) k') (a0 :: L))) by exact Ha.
+    apply filter_In in Hf. tauto.
 Qed.
 
 (** ** The solution of a group (Definition 5.38, AggregateJoin) *)
@@ -183,10 +189,27 @@ Definition values_c (members : list CMapping) (e : SparqlExpr)
 Definition to_vals (f : FMapping) : CMapping :=
   map (fun xt => (fst xt, BVal (snd xt))) f.
 
+(** The bindings of the grouping variables in the solution of a group:
+    those of a representative member (the first one).  All the members
+    of a group have the same key, hence the same values on the grouping
+    variables, and the representative keeps their representations. *)
+Definition key_bindings_c (ks : list Var) (members : list CMapping) : CMapping :=
+  match members with
+  | [] => []
+  | m :: _ =>
+      filter_map (fun x => match lookup x m with
+                           | Some b => Some (x, b)
+                           | None => None
+                           end) ks
+  end.
+
+Definition group_result_c (ks : list Var) (aggs : list Aggregate)
+  (g : Key * list CMapping) : CMapping :=
+  key_bindings_c ks (snd g) ++ to_vals (agg_bindings (values_c (snd g)) aggs).
+
 Definition groupagg_cond (ks : list Var) (aggs : list Aggregate)
   (M : list CMapping) : list CMapping :=
-  map (fun g => to_vals (group_result ks aggs values_c g))
-      (groups (key_c ks) ks M).
+  map (group_result_c ks aggs) (groups (key_c ks) ks M).
 
 (** COUNT on a condensed group is the sum of the cardinalities of the
     mappings on which the expression is defined (Definition 5.39). *)
@@ -215,18 +238,18 @@ Proof.
   rewrite IH. reflexivity.
 Qed.
 
+Lemma map_eq_flat_map_single : forall {A B : Type} (h : A -> B) (e : A -> list B) l,
+  (forall a, In a l -> e a = [h a]) -> map h l = flat_map e l.
+Proof.
+  intros A B h e l H. rewrite map_flat_map_single. apply flat_map_ext_in.
+  intros a Ha. rewrite (H a Ha). reflexivity.
+Qed.
+
 Lemma filter_map_ext_in : forall {A B : Type} (f g : A -> option B) l,
   (forall a, In a l -> f a = g a) -> filter_map f l = filter_map g l.
 Proof.
   intros A B f g l H. unfold filter_map. apply flat_map_ext_in.
   intros a Ha. rewrite (H a Ha). reflexivity.
-Qed.
-
-Lemma in_combine_map : forall {A B : Type} (h : A -> B) (l : list A) a b,
-  In (a, b) (combine l (map h l)) -> b = h a.
-Proof.
-  intros A B h l. induction l as [|a0 l IH]; simpl; intros a b H; [contradiction|].
-  destruct H as [H | H]; [injection H as <- <-; reflexivity | apply IH; exact H].
 Qed.
 
 Lemma expand_to_vals : forall f, expand (to_vals f) = [f].
@@ -251,6 +274,74 @@ Proof.
   apply in_map_iff in Hin. destruct Hin as [xt [<- _]]. exact I.
 Qed.
 
+Lemma expand_app_to_vals : forall m f,
+  expand (m ++ to_vals f) = map (fun f1 => f1 ++ f) (expand m).
+Proof.
+  induction m as [|[x b] m IH]; intros f.
+  - cbn [app expand map]. rewrite expand_to_vals. reflexivity.
+  - cbn [app expand]. rewrite IH, map_flat_map. apply flat_map_ext. intros t.
+    rewrite !map_map. reflexivity.
+Qed.
+
+Lemma key_bindings_lookup : forall ks m rest y b,
+  lookup y (key_bindings_c ks (m :: rest)) = Some b ->
+  In y ks /\ lookup y m = Some b.
+Proof.
+  intros ks m rest y b Hl. cbn [key_bindings_c] in Hl.
+  apply lookup_Some_In in Hl. apply in_filter_map in Hl.
+  destruct Hl as [x [Hx Heq]]. destruct (lookup x m) as [b'|] eqn:E; [|discriminate].
+  injection Heq as <- <-. auto.
+Qed.
+
+Lemma key_bindings_keys_incl : forall ks members y,
+  In y (keys (key_bindings_c ks members)) -> In y ks.
+Proof.
+  intros ks [|m rest] y Hy; [contradiction|].
+  apply In_keys_lookup in Hy. destruct Hy as [b Hb].
+  apply key_bindings_lookup in Hb. tauto.
+Qed.
+
+Lemma NoDup_keys_key_bindings : forall ks members,
+  NoDup ks -> NoDup (keys (key_bindings_c ks members)).
+Proof.
+  intros ks [|m rest] Hnd; [constructor|]. cbn [key_bindings_c].
+  induction ks as [|x ks IH]; [constructor|].
+  apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+  unfold filter_map. cbn [flat_map].
+  destruct (lookup x m) as [b|]; [|cbn [app]; apply IH; exact Hnd].
+  cbn [app keys map fst]. constructor; [|apply IH; exact Hnd].
+  intros Hx. apply Hnotin. apply (key_bindings_keys_incl ks (m :: rest)). exact Hx.
+Qed.
+
+(** The representative's bindings expand to the key (Lemma 6.3). *)
+Lemma expand_key_bindings : forall ks m rest,
+  point_on ks m ->
+  expand (key_bindings_c ks (m :: rest)) = [key_mapping ks (key_c ks m)].
+Proof.
+  intros ks m rest Hp. cbn [key_bindings_c]. unfold key_mapping, key_c, key_of.
+  induction ks as [|x ks IH].
+  - reflexivity.
+  - unfold filter_map. cbn [flat_map combine map snd fst].
+    assert (Hp' : point_on ks m) by (intros y b Hy Hb; apply (Hp y b); [right; exact Hy | exact Hb]).
+    specialize (IH Hp'). unfold filter_map in IH.
+    destruct (lookup x m) as [b|] eqn:E.
+    + assert (Hpt : point_val b <> None) by (apply (Hp x b); [left; reflexivity | exact E]).
+      destruct (point_val b) as [t|] eqn:Ept; [|contradiction].
+      unfold lk_c at 1. rewrite E, Ept. cbn [app expand].
+      rewrite (point_val_vals b t Ept). cbn [flat_map]. rewrite app_nil_r, IH.
+      reflexivity.
+    + unfold lk_c at 1. rewrite E. cbn [app]. exact IH.
+Qed.
+
+Lemma expand_group_result_c : forall ks aggs k m rest,
+  point_on ks m -> key_c ks m = k ->
+  expand (group_result_c ks aggs (k, m :: rest))
+  = [group_result ks aggs values_c (k, m :: rest)].
+Proof.
+  intros ks aggs k m rest Hp Hk. unfold group_result_c, group_result. cbn [fst snd].
+  rewrite expand_app_to_vals, (expand_key_bindings ks m rest Hp), Hk. reflexivity.
+Qed.
+
 Lemma key_mapping_keys_incl : forall ks k x,
   In x (keys (key_mapping ks k)) -> In x ks.
 Proof.
@@ -259,18 +350,6 @@ Proof.
   destruct Hin as [[y' o] [Hin Heq]]. cbn [fst snd] in Heq.
   destruct o; [|discriminate]. injection Heq as <- <-.
   apply in_combine_l in Hin. exact Hin.
-Qed.
-
-(** A grouping variable bound in the solution of a group whose key comes
-    from a condensed mapping [m] is bound in [m]. *)
-Lemma key_mapping_lookup_c : forall ks m x t,
-  lookup x (key_mapping ks (key_c ks m)) = Some t -> lk_c m x = Some t.
-Proof.
-  intros ks m x t Hl. apply lookup_Some_In in Hl.
-  unfold key_mapping, key_c, key_of in Hl. apply in_filter_map in Hl.
-  destruct Hl as [[y o] [Hin Heq]]. cbn [fst snd] in Heq.
-  destruct o; [|discriminate]. injection Heq as <- <-.
-  apply in_combine_map in Hin. congruence.
 Qed.
 
 (** The keys of the group solution are duplicate-free when the grouping
@@ -425,21 +504,19 @@ Lemma groupagg_perm : forall ks aggs M L,
   Permutation (groupagg_flat ks aggs L) (flat_map expand (groupagg_cond ks aggs M)).
 Proof.
   intros ks aggs M L Hwf Hks Haggs HP. unfold groupagg_flat, groupagg_cond.
-  rewrite flat_map_map_comp.
-  rewrite (flat_map_ext _ (fun g => [group_result ks aggs values_c g]))
-    by (intros g; apply expand_to_vals).
-  rewrite <- (map_flat_map_single (group_result ks aggs values_c)).
   destruct L as [|f L'].
   - (* no solution: at most the implicit group *)
     assert (HM : M = []).
     { apply flat_map_expand_nil; [exact Hwf|]. apply Permutation_nil. exact HP. }
-    subst M. destruct ks; reflexivity.
+    subst M. destruct ks; [|reflexivity].
+    cbn [groups map flat_map]. unfold group_result_c. cbn [key_bindings_c snd app].
+    rewrite expand_to_vals. reflexivity.
   - assert (HL : f :: L' <> []) by discriminate.
     assert (HM : M <> []).
     { intros ->. simpl in HP. apply Permutation_sym in HP.
       apply Permutation_nil in HP. discriminate. }
     rewrite (groups_nonempty _ ks (f :: L') HL), (groups_nonempty _ ks M HM).
-    unfold group_by. rewrite !map_map.
+    unfold group_by. rewrite !flat_map_map_comp, !map_map.
     transitivity
       (map (fun k => group_result ks aggs values_c
                        (k, filter (fun m => key_eqb (key_c ks m) k) M))
@@ -457,5 +534,23 @@ Proof.
         rewrite Forall_forall in Haggs. specialize (Haggs m (proj1 Hm)).
         rewrite Forall_forall in Haggs. apply Haggs. exact Hag.
       * apply group_members_perm; assumption.
-    + apply Permutation_map. apply group_keys_perm; assumption.
+    + transitivity
+        (map (fun k => group_result ks aggs values_c
+                         (k, filter (fun m => key_eqb (key_c ks m) k) M))
+             (nodup Key_eq_dec (map (key_c ks) M))).
+      * apply Permutation_map. apply group_keys_perm; assumption.
+      * apply Permutation_refl'. apply map_eq_flat_map_single. intros k Hk.
+        rewrite nodup_In, in_map_iff in Hk. destruct Hk as [m [<- Hm]].
+        rewrite Forall_forall in Hks.
+        destruct (filter (fun m' => key_eqb (key_c ks m') (key_c ks m)) M)
+          as [|m0 rest] eqn:Ef.
+        -- exfalso.
+           assert (Hin : In m (filter (fun m' => key_eqb (key_c ks m') (key_c ks m)) M)).
+           { apply filter_In. split; [exact Hm | apply key_eqb_true; reflexivity]. }
+           rewrite Ef in Hin. contradiction.
+        -- assert (Hm0 : In m0 (filter (fun m' => key_eqb (key_c ks m') (key_c ks m)) M))
+             by (rewrite Ef; left; reflexivity).
+           apply filter_In in Hm0. destruct Hm0 as [Hm0 Hkey].
+           apply key_eqb_true in Hkey.
+           apply expand_group_result_c; [apply Hks; exact Hm0 | exact Hkey].
 Qed.
