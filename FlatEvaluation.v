@@ -13,6 +13,7 @@ Require Import ConVerG.Models.
 Require Import ConVerG.Representations.
 Require Import ConVerG.SolutionMappings.
 Require Import ConVerG.Expressions.
+Require Import ConVerG.Aggregation.
 Require Import ConVerG.Difference.
 Require Import ConVerG.FlatAlgebra.
 Import ListNotations.
@@ -28,16 +29,18 @@ Definition match_term (pt : PatTerm) (t : Term) : option FMapping :=
   end.
 
 (** Matching a quad pattern against a versioned quad (s, p, o, g, v): the
-    graph variable is bound to the versioned IRI VI(v, g). *)
-Definition match_flat (s p o : PatTerm) (g : Var) (vq : VersionedQuad)
+    graph component of the quad is the versioned IRI VI(v, g), to which a
+    graph variable is bound and against which a graph constant is
+    tested (Definition 5.9; the constant of Example 5.14 is a versioned
+    IRI). *)
+Definition match_flat (s p o g : PatTerm) (vq : VersionedQuad)
   : option FMapping :=
   match match_term s (TermIRI (vq_subject vq)),
         match_term p (TermIRI (vq_predicate vq)),
-        match_term o (vq_object vq) with
-  | Some fs, Some fp, Some fo =>
-      Some (fs ++ fp ++ fo ++
-            [(g, TermIRI (vi (vq_version vq) (vq_graph vq)))])
-  | _, _, _ => None
+        match_term o (vq_object vq),
+        match_term g (TermIRI (vi (vq_version vq) (vq_graph vq))) with
+  | Some fs, Some fp, Some fo, Some fg => Some (fs ++ fp ++ fo ++ fg)
+  | _, _, _, _ => None
   end.
 
 (** ** Operators *)
@@ -58,6 +61,11 @@ Definition optional_flat (c : SparqlExpr) (L1 L2 : list FMapping)
   : list FMapping :=
   filter_flat c (join_flat L1 L2) ++ diff_flat c L1 L2.
 
+(** GRAPH ?x { }: one solution per versioned named graph of the archive,
+    i.e. per (graph, version) pair present in the flat model. *)
+Definition graphs_flat (x : Var) (dF : FlatModel) : list FMapping :=
+  map (fun gv => [(x, TermIRI (vi (snd gv) (fst gv)))]) (flat_graphs dF).
+
 (** ** Evaluation *)
 
 Fixpoint eval_flat (e : FlatExpr) (dF : FlatModel) : list FMapping :=
@@ -70,4 +78,6 @@ Fixpoint eval_flat (e : FlatExpr) (dF : FlatModel) : list FMapping :=
   | OptionalF e1 e2 c => optional_flat c (eval_flat e1 dF) (eval_flat e2 dF)
   | ExtendF x ex e => map (extend_flat x ex) (eval_flat e dF)
   | ProjectionF e vars => map (restrict vars) (eval_flat e dF)
+  | GroupAggF ks aggs e => groupagg_flat ks aggs (eval_flat e dF)
+  | GraphsF x => graphs_flat x dF
   end.

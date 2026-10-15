@@ -21,6 +21,7 @@ Require Import ConVerG.Representations.
 Require Import ConVerG.Environments.
 Require Import ConVerG.SolutionMappings.
 Require Import ConVerG.Expressions.
+Require Import ConVerG.Aggregation.
 Require Import ConVerG.Promotion.
 Require Import ConVerG.Difference.
 Require Import ConVerG.Typing.
@@ -110,16 +111,37 @@ Proof.
     intros f'. reflexivity.
 Qed.
 
+(** A predicate hit by at most one version of a duplicate-free version
+    set: the versioned IRI [VI(v, g)] determines [v]. *)
+Lemma flat_map_unique_hit : forall {A : Type} (p : Version -> bool) (a : A) vs,
+  NoDup vs ->
+  (forall v v', In v vs -> In v' vs -> p v = true -> p v' = true -> v = v') ->
+  flat_map (fun v => if p v then [a] else []) vs
+  = if existsb p vs then [a] else [].
+Proof.
+  intros A p a vs Hnd Huniq. induction vs as [|v vs IH]; simpl; [reflexivity|].
+  apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+  destruct (p v) eqn:Ev; simpl.
+  - f_equal. apply flat_map_nil_in. intros v' Hv'.
+    destruct (p v') eqn:Ev'; [|reflexivity].
+    exfalso. apply Hnotin.
+    rewrite (Huniq v v' (or_introl eq_refl) (or_intror Hv') Ev Ev'). exact Hv'.
+  - apply IH; [exact Hnd|]. intros v1 v2 H1 H2. apply Huniq; right; assumption.
+Qed.
+
 (** One entry (q, V) of the condensed model matches exactly as the
-    versioned quads (q, v), v ∈ V, of the flat model. *)
+    versioned quads (q, v), v ∈ V, of the flat model.  When the graph
+    position is a constant, at most one version of V can produce the
+    versioned IRI, which is why V must be duplicate-free. *)
 Lemma match_cond_expand : forall s p o g q vs,
+  NoDup vs ->
   filter_map (match_flat s p o g) (map (quad_with_version q) vs)
   = match match_cond s p o g (q, vs) with
     | Some m => expand m
     | None => []
     end.
 Proof.
-  intros s p o g q vs. unfold filter_map. rewrite flat_map_map_comp.
+  intros s p o g q vs Hnd. unfold filter_map. rewrite flat_map_map_comp.
   unfold match_cond, match_term_c, match_flat.
   cbv beta iota delta [quad_with_version vq_subject vq_predicate vq_object
                        vq_graph vq_version fst snd].
@@ -129,24 +151,41 @@ Proof.
     [|cbv beta iota; apply flat_map_nil].
   destruct (match_term o (quad_object q)) as [fo|] eqn:Eo;
     [|cbv beta iota; apply flat_map_nil].
-  cbv beta iota.
-  rewrite !expand_encode_app. cbn [expand vals].
-  rewrite flat_map_map_comp. rewrite !map_flat_map.
-  apply flat_map_ext. intros v. reflexivity.
+  cbv beta iota. destruct g as [x | t].
+  - (* graph variable: bound to (g, V) *)
+    cbn [match_graph_c match_term].
+    rewrite !expand_encode_app. cbn [expand vals].
+    rewrite flat_map_map_comp. rewrite !map_flat_map.
+    apply flat_map_ext. intros v. reflexivity.
+  - (* graph constant: selects at most one version *)
+    cbn [match_graph_c match_term].
+    rewrite (flat_map_ext_in _
+      (fun v => if (if Term_eq_dec (TermIRI (vi v (quad_graph q))) t then true else false)
+                then [fs ++ fp ++ fo ++ []] else []))
+      by (intros v _; destruct (Term_eq_dec (TermIRI (vi v (quad_graph q))) t); reflexivity).
+    rewrite flat_map_unique_hit; [|exact Hnd|].
+    + destruct (existsb _ vs); [|reflexivity].
+      rewrite !expand_encode_app. reflexivity.
+    + intros v v' _ _ Hv Hv'.
+      destruct (Term_eq_dec (TermIRI (vi v (quad_graph q))) t) as [E|]; [|discriminate].
+      destruct (Term_eq_dec (TermIRI (vi v' (quad_graph q))) t) as [E'|]; [|discriminate].
+      rewrite <- E' in E. injection E as E. apply vi_injective in E. tauto.
 Qed.
 
 Lemma qp_perm : forall s p o g dF dC,
+  wf_condensed_model dC ->
   Permutation dF (flatten dC) ->
   Permutation (filter_map (match_flat s p o g) dF)
               (flat_map expand (filter_map (match_cond s p o g) dC)).
 Proof.
-  intros s p o g dF dC HP.
+  intros s p o g dF dC [_ HwfC] HP.
   etransitivity; [apply Permutation_filter_map; exact HP|].
   unfold flatten. rewrite filter_map_flat_map, flat_map_filter_map.
-  apply Permutation_refl'. apply flat_map_ext. intros [q vs]. cbn [fst snd].
+  apply Permutation_refl'. apply flat_map_ext_in. intros [q vs] Hqvs. cbn [fst snd].
   change (map (fun v => quad_with_version q v) vs)
     with (map (quad_with_version q) vs).
-  rewrite (match_cond_expand s p o g q vs). reflexivity.
+  rewrite Forall_forall in HwfC. specialize (HwfC _ Hqvs). cbn [snd] in HwfC.
+  rewrite (match_cond_expand s p o g q vs (proj1 HwfC)). reflexivity.
 Qed.
 
 Lemma encode_keys : forall f, keys (encode f) = keys f.
@@ -177,6 +216,33 @@ Proof.
   apply in_map_iff in Hxb. destruct Hxb as [xt [<- _]]. exact I.
 Qed.
 
+Lemma match_graph_keys : forall g gi vs mg,
+  match_graph_c g gi vs = Some mg -> keys mg = pat_vars g.
+Proof.
+  intros [x | t] gi vs mg H; simpl in H.
+  - injection H as <-. reflexivity.
+  - destruct (existsb _ vs); [injection H as <-; reflexivity | discriminate].
+Qed.
+
+Lemma match_graph_env : forall g gi vs mg,
+  match_graph_c g gi vs = Some mg ->
+  Forall2 (fun xb xr => fst xb = fst xr /\ binding_repr (snd xb) = snd xr)
+          mg (map (fun x => (x, Condensed)) (pat_vars g)).
+Proof.
+  intros [x | t] gi vs mg H; simpl in H.
+  - injection H as <-. simpl. constructor; [split; reflexivity | constructor].
+  - destruct (existsb _ vs); [injection H as <-; constructor | discriminate].
+Qed.
+
+Lemma match_graph_wf : forall g gi vs mg,
+  NoDup vs -> vs <> [] -> match_graph_c g gi vs = Some mg ->
+  Forall (fun xb => wf_binding (snd xb)) mg.
+Proof.
+  intros [x | t] gi vs mg Hnd Hne H; simpl in H.
+  - injection H as <-. constructor; [split; assumption | constructor].
+  - destruct (existsb _ vs); [injection H as <-; constructor | discriminate].
+Qed.
+
 Lemma qp_inv : forall s p o g dC m,
   NoDup (quad_pat_vars s p o g) -> wf_condensed_model dC ->
   In m (filter_map (match_cond s p o g) dC) -> inv (pat_env s p o g) m.
@@ -190,19 +256,22 @@ Proof.
     [|cbv beta iota in Hm; discriminate].
   destruct (match_term o (quad_object q)) as [fo|] eqn:Eo;
     [|cbv beta iota in Hm; discriminate].
+  destruct (match_graph_c g (quad_graph q) vs) as [mg|] eqn:Eg;
+    [|cbv beta iota in Hm; discriminate].
   cbv beta iota in Hm. injection Hm as <-.
   rewrite Forall_forall in HwfC. specialize (HwfC _ Hqvs). cbn [snd] in HwfC.
   split.
   - split.
     + rewrite !keys_app, !encode_keys, (match_term_keys _ _ _ Es),
-        (match_term_keys _ _ _ Ep), (match_term_keys _ _ _ Eo). exact Hnd.
+        (match_term_keys _ _ _ Ep), (match_term_keys _ _ _ Eo),
+        (match_graph_keys _ _ _ _ Eg). exact Hnd.
     + rewrite !Forall_app. repeat split; try apply encode_wf.
-      constructor; [exact HwfC | constructor].
+      apply (match_graph_wf g (quad_graph q) vs mg (proj1 HwfC) (proj2 HwfC) Eg).
   - apply env_ok_pointwise. unfold pat_env. rewrite !map_app, <- !app_assoc.
     apply Forall2_app; [apply (match_term_env _ _ _ Es)|].
     apply Forall2_app; [apply (match_term_env _ _ _ Ep)|].
     apply Forall2_app; [apply (match_term_env _ _ _ Eo)|].
-    constructor; [split; reflexivity | constructor].
+    apply (match_graph_env _ _ _ _ Eg).
 Qed.
 
 (** ** Join *)
@@ -429,6 +498,128 @@ Proof.
   split; [apply restrict_wf; exact W | apply env_ok_restrict; exact O].
 Qed.
 
+(** ** Grouping and aggregation *)
+
+Lemma env_lookup_map_value : forall x l (rest : Environment),
+  In x l ->
+  env_lookup x (map (fun y => (y, Value)) l ++ rest) = Some Value.
+Proof.
+  intros x l rest Hx. rewrite env_lookup_eq, lookup_app.
+  induction l as [|y l IH]; simpl; [contradiction|].
+  destruct (Var_eq_dec x y) as [-> | Hneq]; [reflexivity|].
+  apply IH. destruct Hx as [Hx | Hx]; [congruence | exact Hx].
+Qed.
+
+Lemma env_lookup_map_value_r : forall x l (aggs : list Aggregate),
+  ~ In x l -> In x (map agg_var aggs) ->
+  env_lookup x (map (fun y => (y, Value)) l
+                ++ map (fun ag => (agg_var ag, Value)) aggs) = Some Value.
+Proof.
+  intros x l aggs Hnot Hx. rewrite env_lookup_eq, lookup_app.
+  assert (E : lookup x (map (fun y => (y, Value)) l) = None).
+  { apply lookup_None_iff. unfold keys. rewrite map_map. cbn [fst].
+    rewrite map_id. exact Hnot. }
+  rewrite E. induction aggs as [|ag aggs IH]; simpl; [contradiction|].
+  destruct (Var_eq_dec x (agg_var ag)) as [-> | Hneq]; [reflexivity|].
+  apply IH. destruct Hx as [Hx | Hx]; [congruence | exact Hx].
+Qed.
+
+Lemma groupagg_inv : forall env ks aggs M,
+  Forall (inv env) M -> NoDup ks -> NoDup (map agg_var aggs) ->
+  (forall x, In x (map agg_var aggs) -> ~ In x ks) ->
+  Forall (inv (groupagg_env env ks aggs)) (groupagg_cond ks aggs M).
+Proof.
+  intros env ks aggs M H Hks Haggs Hdisj. apply Forall_forall. intros m' Hm'.
+  unfold groupagg_cond in Hm'. apply in_map_iff in Hm'.
+  destruct Hm' as [[k members] [<- Hg]]. split.
+  - apply to_vals_wf. apply NoDup_keys_group_result; assumption.
+  - intros y b Hl. rewrite to_vals_lookup in Hl.
+    destruct (lookup y (group_result ks aggs values_c (k, members))) as [t|] eqn:El;
+      [|discriminate].
+    injection Hl as <-. exists Value. split; [|apply leq_repr_refl].
+    unfold group_result in El. cbn [fst snd] in El. rewrite lookup_app in El.
+    destruct (lookup y (key_mapping ks k)) as [t'|] eqn:Ek.
+    + (* a grouping variable, bound in the key *)
+      injection El as <-.
+      assert (Hy : In y ks)
+        by (apply (key_mapping_keys_incl ks k); eapply lookup_In_keys; eauto).
+      assert (Hdom : In y (env_domain env)).
+      { destruct (in_groups_key _ _ _ _ _ Hg) as [[-> ->] | [m [Hm <-]]].
+        - exfalso. unfold key_mapping in Ek. destruct ks; discriminate Ek.
+        - apply key_mapping_lookup_c in Ek. unfold lk_c in Ek.
+          destruct (lookup y m) as [b|] eqn:Eb; [|discriminate].
+          rewrite Forall_forall in H. destruct (H m Hm) as [_ O].
+          eapply env_ok_keys_domain; [exact O | eapply lookup_In_keys; eauto]. }
+      unfold groupagg_env. apply env_lookup_map_value. apply filter_In.
+      split; [exact Hy|]. unfold in_env_domain. apply inb_true_iff. exact Hdom.
+    + (* an aggregate variable *)
+      assert (Hy : In y (map agg_var aggs))
+        by (eapply agg_bindings_keys_incl; eapply lookup_In_keys; eauto).
+      unfold groupagg_env. apply env_lookup_map_value_r; [|exact Hy].
+      intros Hin. apply filter_In in Hin. apply (Hdisj y Hy). tauto.
+Qed.
+
+(** ** Versioned named graphs (GRAPH ?x { }) *)
+
+Lemma expand_single : forall x b,
+  expand [(x, b)] = map (fun t => [(x, t)]) (vals b).
+Proof.
+  intros x b. cbn [expand]. generalize (vals b). intros ts.
+  induction ts as [|t ts IH]; simpl; [reflexivity|]. f_equal; auto.
+Qed.
+
+Lemma flat_map_expand_graphs_cond : forall x cat,
+  flat_map expand (graphs_cond x cat) = map (fun t => [(x, t)]) (vals (BAll cat)).
+Proof.
+  intros x cat. unfold graphs_cond. destruct cat as [|gv cat]; [reflexivity|].
+  cbn [flat_map]. rewrite app_nil_r. apply expand_single.
+Qed.
+
+(** GRAPHS case of Theorem 6.2: the versioned named graphs of the flat
+    model are the values of the marker • over the catalog of the
+    condensed model. *)
+Lemma graphs_perm : forall x dF dC,
+  Permutation dF (flatten dC) ->
+  Permutation (graphs_flat x dF) (flat_map expand (graphs_cond x (graph_catalog dC))).
+Proof.
+  intros x dF dC HP. rewrite flat_map_expand_graphs_cond. unfold graphs_flat.
+  rewrite <- (map_map (fun gv : IRI * Version => TermIRI (vi (snd gv) (fst gv)))
+                      (fun t => [(x, t)])).
+  apply Permutation_map.
+  destruct (graph_catalog_NoDup dC) as [HndC HvsC].
+  apply NoDup_Permutation.
+  - apply NoDup_map_inj_in; [|apply NoDup_flat_graphs].
+    intros [g v] [g' v'] _ _ Heq. cbn [fst snd] in Heq. injection Heq as Heq.
+    apply vi_injective in Heq. destruct Heq as [<- <-]. reflexivity.
+  - apply NoDup_vals_BAll; assumption.
+  - intros t. rewrite in_map_iff, in_vals_BAll. split.
+    + intros [[g v] [<- Hin]]. cbn [fst snd].
+      apply (flat_graphs_catalog_pairs dF dC g v HP) in Hin.
+      apply in_catalog_pairs in Hin. destruct Hin as [vs [Hin Hv]].
+      exists g, vs, v. auto.
+    + intros [g [vs [v [Hin [Hv ->]]]]]. exists (g, v). split; [reflexivity|].
+      apply (flat_graphs_catalog_pairs dF dC g v HP).
+      apply in_catalog_pairs. exists vs. auto.
+Qed.
+
+Lemma graphs_inv : forall x dC,
+  wf_condensed_model dC ->
+  Forall (inv [(x, UnboundGraph)]) (graphs_cond x (graph_catalog dC)).
+Proof.
+  intros x dC HwfC. unfold graphs_cond.
+  destruct (graph_catalog dC) as [|gv cat] eqn:E; [constructor|].
+  constructor; [|constructor]. split.
+  - split.
+    + constructor; [intros [] | constructor].
+    + constructor; [|constructor]. cbn [snd wf_binding]. rewrite <- E.
+      apply wf_catalog_graph_catalog; [exact HwfC | rewrite E; discriminate].
+  - intros y b Hl. simpl in Hl. destruct (Var_eq_dec y x) as [-> | Hneq];
+      [|discriminate].
+    injection Hl as <-. exists UnboundGraph. simpl.
+    destruct (Var_eq_dec x x); [|contradiction].
+    split; [reflexivity | apply leq_repr_refl].
+Qed.
+
 (** ** Theorem 6.2, for every well-typed condensed expression *)
 
 (** Type soundness and evaluation equivalence: a well-typed condensed
@@ -447,11 +638,13 @@ Proof.
                   | e1 e2 c env1 env2 T1 IH1 T2 IH2 Hpts1 Hpts2
                   | x ex e env T IH Hfresh Hpts
                   | e vars env T IH Hdrop
-                  | reqs e env T IH];
+                  | ks aggs e env T IH Hks Haggs Hndk Hnda Hdisj
+                  | reqs e env T IH
+                  | x];
     cbn [erase eval_flat eval_cond].
   - (* quad pattern *)
     split.
-    + apply qp_perm. exact HP.
+    + apply qp_perm; [exact HwfC | exact HP].
     + apply Forall_forall. intros m Hm. apply (qp_inv s p o g dC m Hnd HwfC Hm).
   - (* join *)
     destruct IH1 as [P1 I1]. destruct IH2 as [P2 I2]. split.
@@ -461,7 +654,7 @@ Proof.
     destruct IH as [P1 I1]. split.
     + apply filter_perm; [|exact P1].
       eapply Forall_impl; [|exact I1]. intros m [_ O].
-      eapply env_ok_point_on; [exact O | exact Hpts].
+      eapply env_meets_point_on; [exact O | apply value_greatest | exact Hpts].
     + apply filter_inv. exact I1.
   - (* union *)
     destruct IH1 as [P1 I1]. destruct IH2 as [P2 I2]. split.
@@ -473,16 +666,17 @@ Proof.
         [apply (inv_wf _ _ I1) | apply (inv_wf _ _ I2) | | exact P1 | exact P2].
       intros m1 m2 Hm1 Hm2. rewrite Forall_forall in I1, I2.
       destruct (I1 m1 Hm1) as [_ O1]. destruct (I2 m2 Hm2) as [_ O2].
-      apply merge_cond_point_on; eapply env_ok_point_on; eassumption.
+      apply merge_cond_point_on;
+        eapply env_meets_point_on; try eassumption; apply value_greatest.
     + apply diff_inv. exact I1.
   - (* optional *)
     destruct IH1 as [P1 I1]. destruct IH2 as [P2 I2].
     assert (Q1 : Forall (fun m => point_on (expr_vars c) m) (eval_cond e1 dC)).
     { eapply Forall_impl; [|exact I1]. intros m [_ O].
-      eapply env_ok_point_on; [exact O | exact Hpts1]. }
+      eapply env_meets_point_on; [exact O | apply value_greatest | exact Hpts1]. }
     assert (Q2 : Forall (fun m => point_on (expr_vars c) m) (eval_cond e2 dC)).
     { eapply Forall_impl; [|exact I2]. intros m [_ O].
-      eapply env_ok_point_on; [exact O | exact Hpts2]. }
+      eapply env_meets_point_on; [exact O | apply value_greatest | exact Hpts2]. }
     split.
     + apply optional_perm;
         [apply (inv_wf _ _ I1) | apply (inv_wf _ _ I2) | exact Q1 | exact Q2
@@ -495,7 +689,7 @@ Proof.
     destruct IH as [P1 I1]. split.
     + apply extend_perm; [|exact P1].
       eapply Forall_impl; [|exact I1]. intros m [_ O].
-      eapply env_ok_point_on; [exact O | exact Hpts].
+      eapply env_meets_point_on; [exact O | apply leq_repr_refl | exact Hpts].
     + apply extend_inv; [|exact I1]. intros m Hm Hk. apply Hfresh.
       rewrite Forall_forall in I1. destruct (I1 m Hm) as [_ O].
       eapply env_ok_keys_domain; eauto.
@@ -508,10 +702,21 @@ Proof.
       apply point_val_repr. apply Id_leq_point.
       eapply leq_repr_trans; [apply (Hdrop y r Hr Hy) | exact Hle].
     + apply projection_inv. exact I1.
+  - (* grouping and aggregation *)
+    destruct IH as [P1 I1]. split.
+    + apply groupagg_perm; [apply (inv_wf _ _ I1) | | | exact P1].
+      * eapply Forall_impl; [|exact I1]. intros m [_ O].
+        eapply env_meets_ids_point_on; eauto.
+      * eapply Forall_impl; [|exact I1]. intros m [_ O].
+        apply Forall_forall. intros ag Hag. rewrite Forall_forall in Haggs.
+        eapply env_meets_point_on; [exact O | apply value_greatest | apply Haggs; exact Hag].
+    + apply groupagg_inv; assumption.
   - (* representation transformation *)
     destruct IH as [P1 I1]. split.
     + apply (promote_seq_perm_inv _ reqs _ _ I1 P1).
     + apply promote_seq_inv. exact I1.
+  - (* versioned named graphs *)
+    split; [apply graphs_perm; exact HP | apply graphs_inv; exact HwfC].
 Qed.
 
 (** The translation τ: its output is well-typed and erases to the source

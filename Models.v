@@ -372,6 +372,111 @@ Proof.
     eapply in_flatten; eassumption.
 Qed.
 
+(** ** Named Graphs of an Archive *)
+
+(** The (graph, version) pairs present in a flat model, without
+    duplicates: the named graphs of the flat dataset, seen as versioned
+    IRIs, are exactly [VI(v, g)] for these pairs. *)
+Definition GraphVersion_eq_dec :
+  forall a b : IRI * Version, {a = b} + {a <> b}.
+Proof.
+  intros [g v] [g' v'].
+  destruct (IRI_eq_dec g g'); destruct (Version_eq_dec v v');
+    [left; congruence | right; congruence | right; congruence | right; congruence].
+Defined.
+
+Definition flat_graphs (fm : FlatModel) : list (IRI * Version) :=
+  nodup GraphVersion_eq_dec (map (fun vq => (vq_graph vq, vq_version vq)) fm).
+
+Lemma in_flat_graphs : forall fm g v,
+  In (g, v) (flat_graphs fm) <->
+  exists vq, In vq fm /\ vq_graph vq = g /\ vq_version vq = v.
+Proof.
+  intros fm g v. unfold flat_graphs. rewrite nodup_In, in_map_iff. split.
+  - intros [vq [Heq Hin]]. injection Heq as <- <-. eauto.
+  - intros [vq [Hin [<- <-]]]. eauto.
+Qed.
+
+Lemma NoDup_flat_graphs : forall fm, NoDup (flat_graphs fm).
+Proof. intros fm. apply NoDup_nodup. Qed.
+
+(** The catalog of a condensed model: each named graph with the set of
+    versions in which it holds at least one quad. *)
+Definition graph_versions (g : IRI) (cm : CondensedModel) : VersionSet :=
+  nodup Version_eq_dec
+    (flat_map (fun qvs : Quad * VersionSet =>
+                 if IRI_eq_dec (quad_graph (fst qvs)) g then snd qvs else []) cm).
+
+Definition graph_catalog (cm : CondensedModel) : Catalog :=
+  map (fun g => (g, graph_versions g cm))
+      (nodup IRI_eq_dec (map (fun qvs : Quad * VersionSet => quad_graph (fst qvs)) cm)).
+
+Lemma in_graph_versions : forall g cm v,
+  In v (graph_versions g cm) <->
+  exists q vs, In (q, vs) cm /\ quad_graph q = g /\ In v vs.
+Proof.
+  intros g cm v. unfold graph_versions. rewrite nodup_In, in_flat_map. split.
+  - intros [[q vs] [Hin Hv]]. cbn [fst snd] in Hv.
+    destruct (IRI_eq_dec (quad_graph q) g) as [<- | Hneq]; [eauto | contradiction].
+  - intros [q [vs [Hin [<- Hv]]]]. exists (q, vs). split; [exact Hin|].
+    cbn [fst snd]. destruct (IRI_eq_dec (quad_graph q) (quad_graph q));
+      [exact Hv | contradiction].
+Qed.
+
+Lemma in_graph_catalog : forall cm g vs,
+  In (g, vs) (graph_catalog cm) <->
+  vs = graph_versions g cm /\ exists q vs', In (q, vs') cm /\ quad_graph q = g.
+Proof.
+  intros cm g vs. unfold graph_catalog. rewrite in_map_iff. split.
+  - intros [g' [Heq Hin]]. injection Heq as <- <-. split; [reflexivity|].
+    rewrite nodup_In, in_map_iff in Hin. destruct Hin as [[q vs'] [<- Hin]].
+    exists q, vs'. auto.
+  - intros [-> [q [vs' [Hin Hg]]]]. exists g. split; [reflexivity|].
+    rewrite nodup_In, in_map_iff. exists (q, vs'). auto.
+Qed.
+
+(** The pairs of the catalog are the pairs of the flattening. *)
+Lemma in_catalog_pairs_graph_catalog : forall cm g v,
+  In (g, v) (catalog_pairs (graph_catalog cm)) <->
+  exists q vs, In (q, vs) cm /\ quad_graph q = g /\ In v vs.
+Proof.
+  intros cm g v. rewrite in_catalog_pairs. split.
+  - intros [vs [Hin Hv]]. apply in_graph_catalog in Hin.
+    destruct Hin as [-> _]. apply in_graph_versions. exact Hv.
+  - intros H. exists (graph_versions g cm). split.
+    + apply in_graph_catalog. split; [reflexivity|].
+      destruct H as [q [vs [Hin [Hg _]]]]. eauto.
+    + apply in_graph_versions. exact H.
+Qed.
+
+Lemma graph_catalog_NoDup : forall cm,
+  NoDup (map fst (graph_catalog cm)) /\
+  Forall (fun gv : IRI * VersionSet => NoDup (snd gv)) (graph_catalog cm).
+Proof.
+  intros cm. split.
+  - unfold graph_catalog. rewrite map_map. cbn [fst].
+    rewrite map_id. apply NoDup_nodup.
+  - apply Forall_forall. intros [g vs] Hin. apply in_graph_catalog in Hin.
+    destruct Hin as [-> _]. apply NoDup_nodup.
+Qed.
+
+Lemma wf_catalog_graph_catalog : forall cm,
+  wf_condensed_model cm -> graph_catalog cm <> [] ->
+  wf_catalog (graph_catalog cm).
+Proof.
+  intros cm [_ Hwf] Hne. split; [|split; [|exact Hne]].
+  - apply graph_catalog_NoDup.
+  - apply Forall_forall. intros [g vs] Hin. apply in_graph_catalog in Hin.
+    destruct Hin as [-> [q [vs' [Hin Hg]]]]. cbn [snd]. split.
+    + apply NoDup_nodup.
+    + rewrite Forall_forall in Hwf. specialize (Hwf _ Hin). cbn [snd] in Hwf.
+      destruct Hwf as [_ Hne']. destruct vs' as [|v vs']; [contradiction|].
+      intros H. assert (In v (graph_versions g cm)) as Hv.
+      { apply in_graph_versions. exists q, (v :: vs'). split; [exact Hin|].
+        split; [exact Hg | left; reflexivity]. }
+      rewrite H in Hv. contradiction.
+Qed.
+
 (** ** From Correspondence to Permutation *)
 
 (** The flattening of a well-formed condensed model has no duplicates. *)
@@ -416,4 +521,22 @@ Proof.
     destruct Hin as [q [vs [Hqvs [_ [Hquad Hvin]]]]].
     exists vs. rewrite Hquad. split; [|exact Hvin].
     apply condensed_lookup_NoDup; [apply Hwf | exact Hqvs].
+Qed.
+
+(** The named graphs of corresponding models coincide. *)
+Lemma flat_graphs_catalog_pairs : forall fm cm g v,
+  Permutation fm (flatten cm) ->
+  In (g, v) (flat_graphs fm) <-> In (g, v) (catalog_pairs (graph_catalog cm)).
+Proof.
+  intros fm cm g v HP. rewrite in_flat_graphs, in_catalog_pairs_graph_catalog.
+  split.
+  - intros [vq [Hin [<- <-]]].
+    apply (Permutation_in _ HP) in Hin. apply in_flatten_inv in Hin.
+    destruct Hin as [q [vs [Hqvs [_ [Hq Hv]]]]]. exists q, vs.
+    split; [exact Hqvs|]. split; [|exact Hv].
+    rewrite <- Hq. destruct vq. reflexivity.
+  - intros [q [vs [Hin [<- Hv]]]]. exists (quad_with_version q v).
+    split; [|split; destruct q; reflexivity].
+    apply (Permutation_in _ (Permutation_sym HP)).
+    apply in_flatten with (vs := vs); assumption.
 Qed.

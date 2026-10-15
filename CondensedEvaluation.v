@@ -14,6 +14,7 @@ Require Import ConVerG.Models.
 Require Import ConVerG.Representations.
 Require Import ConVerG.SolutionMappings.
 Require Import ConVerG.Expressions.
+Require Import ConVerG.Aggregation.
 Require Import ConVerG.Promotion.
 Require Import ConVerG.Difference.
 Require Import ConVerG.FlatAlgebra.
@@ -33,16 +34,29 @@ Definition match_term_c (pt : PatTerm) (t : Term) : option CMapping :=
   | None => None
   end.
 
+(** Matching the graph position against the named graph [g] of an entry
+    valid in the versions [vs]: a variable is bound to the ζ binding
+    (g, V); a constant selects the entry when it is the versioned IRI of
+    one of its versions (Definition 5.24), and produces no binding. *)
+Definition match_graph_c (pt : PatTerm) (g : IRI) (vs : VersionSet)
+  : option CMapping :=
+  match pt with
+  | PVar x => Some [(x, BCond g vs)]
+  | PConst t =>
+      if existsb (fun v => if Term_eq_dec (TermIRI (vi v g)) t then true else false) vs
+      then Some [] else None
+  end.
+
 (** Matching a quad pattern against an entry (q, V) of the condensed
-    model: the graph variable is bound to the ζ binding (g, V). *)
-Definition match_cond (s p o : PatTerm) (g : Var) (qvs : Quad * VersionSet)
+    model. *)
+Definition match_cond (s p o g : PatTerm) (qvs : Quad * VersionSet)
   : option CMapping :=
   match match_term_c s (TermIRI (quad_subject (fst qvs))),
         match_term_c p (TermIRI (quad_predicate (fst qvs))),
-        match_term_c o (quad_object (fst qvs)) with
-  | Some ms, Some mp, Some mo =>
-      Some (ms ++ mp ++ mo ++ [(g, BCond (quad_graph (fst qvs)) (snd qvs))])
-  | _, _, _ => None
+        match_term_c o (quad_object (fst qvs)),
+        match_graph_c g (quad_graph (fst qvs)) (snd qvs) with
+  | Some ms, Some mp, Some mo, Some mg => Some (ms ++ mp ++ mo ++ mg)
+  | _, _, _, _ => None
   end.
 
 (** ** Operators *)
@@ -66,6 +80,15 @@ Definition optional_cond (c : SparqlExpr) (M1 M2 : list CMapping)
   : list CMapping :=
   filter_cond c (join_cond M1 M2) ++ diff_cond c M1 M2.
 
+(** GRAPH ?x { }: a single condensed solution binding ?x to the marker •,
+    i.e. to the catalog of the archive (none when the archive is empty,
+    so that the ψ binding always denotes at least one value). *)
+Definition graphs_cond (x : Var) (cat : Catalog) : list CMapping :=
+  match cat with
+  | [] => []
+  | _ :: _ => [[(x, BAll cat)]]
+  end.
+
 (** ** Evaluation *)
 
 Fixpoint eval_cond (e : CondExpr) (dC : CondensedModel) : list CMapping :=
@@ -78,7 +101,9 @@ Fixpoint eval_cond (e : CondExpr) (dC : CondensedModel) : list CMapping :=
   | OptionalC e1 e2 c => optional_cond c (eval_cond e1 dC) (eval_cond e2 dC)
   | ExtendC x ex e => map (extend_cond x ex) (eval_cond e dC)
   | ProjectionC e vars => map (restrict vars) (eval_cond e dC)
+  | GroupAggC ks aggs e => groupagg_cond ks aggs (eval_cond e dC)
   | TransformReprC reqs e => promote_seq reqs (eval_cond e dC)
+  | GraphsC x => graphs_cond x (graph_catalog dC)
   end.
 
 (** ** Cardinality of a condensed result (Definition 5.39) *)

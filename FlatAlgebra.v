@@ -4,11 +4,13 @@
     standard SPARQL algebra evaluated over the flat model d_F, where the
     graph position of a quad pattern is bound to a versioned IRI.
 
-    Scope: quad patterns, join, filter, union, difference, optional
-    (left outer join), bind (extend) and projection.  Grouping and
-    aggregation (Definitions 5.14–5.15) are outside the scope of this
-    development, as is the ψ representation (unbound graph variables):
-    the graph position of a quad pattern is always a variable.
+    Scope: quad patterns (every position may be a variable or a
+    constant; a constant in the graph position is a versioned IRI
+    [VI(v, g)], see Definition 5.9 and Example 5.14), join, filter,
+    union, difference, optional (left outer join), bind (extend),
+    projection, grouping with aggregation (Definitions 5.37–5.39) and
+    the enumeration of the versioned named graphs ([GRAPH ?g { }], the
+    source of the ψ representation).
 *)
 
 From Stdlib Require Import List Bool.
@@ -18,6 +20,7 @@ Require Import ConVerG.Versioning.
 Require Import ConVerG.Representations.
 Require Import ConVerG.SolutionMappings.
 Require Import ConVerG.Expressions.
+Require Import ConVerG.Aggregation.
 Import ListNotations.
 
 (** ** Pattern terms *)
@@ -33,14 +36,14 @@ Definition pat_vars (pt : PatTerm) : list Var :=
   end.
 
 (** The variables of a quad pattern, in binding order. *)
-Definition quad_pat_vars (s p o : PatTerm) (g : Var) : list Var :=
-  pat_vars s ++ pat_vars p ++ pat_vars o ++ [g].
+Definition quad_pat_vars (s p o g : PatTerm) : list Var :=
+  pat_vars s ++ pat_vars p ++ pat_vars o ++ pat_vars g.
 
 (** ** Flat algebra expressions *)
 
 Inductive FlatExpr : Type :=
-  | QuadPatternF : PatTerm -> PatTerm -> PatTerm -> Var -> FlatExpr
-      (** QP_F(s, p, o, ?g) *)
+  | QuadPatternF : PatTerm -> PatTerm -> PatTerm -> PatTerm -> FlatExpr
+      (** QP_F(s, p, o, g): [g] is a variable or a versioned IRI *)
   | JoinF : FlatExpr -> FlatExpr -> FlatExpr
       (** ⋈_F(e1, e2) *)
   | FilterF : SparqlExpr -> FlatExpr -> FlatExpr
@@ -53,8 +56,14 @@ Inductive FlatExpr : Type :=
       (** ⟕_F(e1, e2, c) *)
   | ExtendF : Var -> SparqlExpr -> FlatExpr -> FlatExpr
       (** ρ_F(?x, expr, e): BIND *)
-  | ProjectionF : FlatExpr -> list Var -> FlatExpr.
+  | ProjectionF : FlatExpr -> list Var -> FlatExpr
       (** Π_F(e, vars) *)
+  | GroupAggF : list Var -> list Aggregate -> FlatExpr -> FlatExpr
+      (** AggJ_F(Agg_F(a_1 ← f_1(e_1), Gr), ..., Agg_F(a_n ← f_n(e_n), Gr))
+          with Gr = Gr_F(ks, e): GROUP BY ks with aggregates *)
+  | GraphsF : Var -> FlatExpr.
+      (** GRAPH ?x { }: ?x ranges over the versioned named graphs of the
+          archive (the flat form of the ψ representation) *)
 
 (** Variables that may be bound by the result of an expression (the
     in-scope variables). *)
@@ -68,11 +77,14 @@ Fixpoint flat_expr_vars (e : FlatExpr) : list Var :=
   | OptionalF e1 e2 _ => flat_expr_vars e1 ++ flat_expr_vars e2
   | ExtendF x _ e => x :: flat_expr_vars e
   | ProjectionF _ vars => vars
+  | GroupAggF ks aggs _ => ks ++ map agg_var aggs
+  | GraphsF x => [x]
   end.
 
-(** Well-formed expressions: quad patterns do not repeat a variable and
+(** Well-formed expressions: quad patterns do not repeat a variable,
     BIND introduces a fresh variable (the unique-naming assumption of the
-    thesis). *)
+    thesis), and the grouping and aggregate variables of a GROUP BY are
+    pairwise distinct. *)
 Fixpoint wf_flat_expr (e : FlatExpr) : Prop :=
   match e with
   | QuadPatternF s p o g => NoDup (quad_pat_vars s p o g)
@@ -83,4 +95,8 @@ Fixpoint wf_flat_expr (e : FlatExpr) : Prop :=
   | OptionalF e1 e2 _ => wf_flat_expr e1 /\ wf_flat_expr e2
   | ExtendF x _ e => ~ In x (flat_expr_vars e) /\ wf_flat_expr e
   | ProjectionF e _ => wf_flat_expr e
+  | GroupAggF ks aggs e =>
+      NoDup ks /\ NoDup (map agg_var aggs) /\
+      (forall x, In x (map agg_var aggs) -> ~ In x ks) /\ wf_flat_expr e
+  | GraphsF _ => True
   end.

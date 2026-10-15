@@ -5,7 +5,8 @@
 
     A flat solution mapping binds variables to RDF terms (representation ν
     only).  A condensed (typed) solution mapping binds each variable to a
-    [Binding] whose representation is ν, ι or ζ.  The expansion function
+    [Binding] whose representation is ν, ι, ζ or ψ (the universal graph
+    marker [•], which denotes the catalog of the archive).  The expansion function
     [expand] (Ξ, Definition 5.22) turns a condensed mapping into the list
     of flat mappings it represents.
 
@@ -26,13 +27,17 @@ Import ListNotations.
 Inductive Binding : Type :=
   | BVal : Term -> Binding                 (** ν: an RDF term *)
   | BId : nat -> Binding                   (** ι: a term identifier *)
-  | BCond : IRI -> VersionSet -> Binding.  (** ζ: (named graph, version set) *)
+  | BCond : IRI -> VersionSet -> Binding   (** ζ: (named graph, version set) *)
+  | BAll : Catalog -> Binding.             (** ψ: all versioned named graphs
+                                               of the archive ([•]), given by
+                                               its catalog *)
 
 Definition binding_repr (b : Binding) : Representation :=
   match b with
   | BVal _ => Value
   | BId _ => Id
   | BCond _ _ => Condensed
+  | BAll _ => UnboundGraph
   end.
 
 (** Term-level forms of the injectivity of [vi]. *)
@@ -55,13 +60,19 @@ Qed.
 
 (** ** Represented Values (Definition 5.21) *)
 
+(** The versioned IRIs of one entry (g, V) of a catalog. *)
+Definition entry_vals (gv : IRI * VersionSet) : list Term :=
+  map (fun v => TermIRI (vi v (fst gv))) (snd gv).
+
 (** vals(b): the RDF terms denoted by a binding.  For a ζ binding (g, V),
-    these are the versioned IRIs VI(v, g) for v ∈ V. *)
+    these are the versioned IRIs VI(v, g) for v ∈ V; for the marker [•]
+    with catalog [cat], the versioned IRIs of every entry of [cat]. *)
 Definition vals (b : Binding) : list Term :=
   match b with
   | BVal t => [t]
   | BId n => [id_to_val n]
   | BCond g vs => map (fun v => TermIRI (vi v g)) vs
+  | BAll cat => flat_map entry_vals cat
   end.
 
 (** A point-valued binding denotes exactly one term. *)
@@ -70,7 +81,29 @@ Definition point_val (b : Binding) : option Term :=
   | BVal t => Some t
   | BId n => Some (id_to_val n)
   | BCond _ _ => None
+  | BAll _ => None
   end.
+
+Lemma in_vals_BAll : forall cat t,
+  In t (vals (BAll cat)) <->
+  exists g vs v, In (g, vs) cat /\ In v vs /\ t = TermIRI (vi v g).
+Proof.
+  intros cat t. cbn [vals]. rewrite in_flat_map. split.
+  - intros [[g vs] [Hin Ht]]. unfold entry_vals in Ht. cbn [fst snd] in Ht.
+    apply in_map_iff in Ht. destruct Ht as [v [<- Hv]]. exists g, vs, v. auto.
+  - intros [g [vs [v [Hin [Hv ->]]]]]. exists (g, vs). split; [exact Hin|].
+    unfold entry_vals. cbn [fst snd]. apply in_map_iff. exists v. auto.
+Qed.
+
+(** The number of values of [•]: one per (graph, version) pair of the
+    catalog (the factor of a ψ variable in Definition 5.39). *)
+Lemma vals_BAll_length : forall cat,
+  length (vals (BAll cat)) = fold_right (fun gv n => length (snd gv) + n) 0 cat.
+Proof.
+  intros cat. cbn [vals]. induction cat as [|[g vs] cat IH]; [reflexivity|].
+  cbn [flat_map fold_right]. rewrite length_app, IH. unfold entry_vals.
+  cbn [fst snd]. rewrite length_map. reflexivity.
+Qed.
 
 Lemma point_val_vals : forall b t, point_val b = Some t -> vals b = [t].
 Proof. intros b t H; destruct b; simpl in *; congruence. Qed.
@@ -81,25 +114,62 @@ Proof. intros []; simpl; split; intros; congruence. Qed.
 
 (** ** Well-formed Bindings *)
 
-(** A ζ binding carries a non-empty, duplicate-free set of versions. *)
+(** A ζ binding carries a non-empty, duplicate-free set of versions; a ψ
+    binding carries a well-formed catalog. *)
 Definition wf_binding (b : Binding) : Prop :=
   match b with
   | BCond _ vs => NoDup vs /\ vs <> []
+  | BAll cat => wf_catalog cat
   | _ => True
   end.
 
+(** In a list with duplicate-free first components, the first component
+    determines the element. *)
+Lemma NoDup_fst_eq {A B : Type} (l : list (A * B)) a a' :
+  NoDup (map fst l) -> In a l -> In a' l -> fst a = fst a' -> a = a'.
+Proof.
+  induction l as [|x l IH]; simpl; intros Hnd H1 H2 Hfst; [contradiction|].
+  apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+  destruct H1 as [<- | H1]; destruct H2 as [<- | H2]; auto.
+  - exfalso. apply Hnotin. rewrite Hfst. apply in_map. exact H2.
+  - exfalso. apply Hnotin. rewrite <- Hfst. apply in_map. exact H1.
+Qed.
+
+Lemma NoDup_vals_BAll : forall cat,
+  NoDup (map fst cat) ->
+  Forall (fun gv : IRI * VersionSet => NoDup (snd gv)) cat ->
+  NoDup (vals (BAll cat)).
+Proof.
+  intros cat Hnd Hvs. cbn [vals]. apply NoDup_flat_map.
+  - eapply NoDup_map_inv. exact Hnd.
+  - intros [g vs] Hin. unfold entry_vals. cbn [fst snd].
+    apply NoDup_map_term_vi. rewrite Forall_forall in Hvs.
+    apply (Hvs (g, vs) Hin).
+  - intros [g vs] [g' vs'] t Hin Hin' Ht Ht'.
+    unfold entry_vals in Ht, Ht'. cbn [fst snd] in Ht, Ht'.
+    apply in_map_iff in Ht. destruct Ht as [v [<- _]].
+    apply in_map_iff in Ht'. destruct Ht' as [v' [Heq _]].
+    injection Heq as Heq. apply vi_injective in Heq. destruct Heq as [_ Hg].
+    subst g'. apply (NoDup_fst_eq cat (g, vs) (g, vs') Hnd Hin Hin' eq_refl).
+Qed.
+
 Lemma wf_binding_NoDup_vals : forall b, wf_binding b -> NoDup (vals b).
 Proof.
-  intros [t | n | g vs]; simpl; intros H.
+  intros [t | n | g vs | cat]; simpl; intros H.
   - repeat constructor; auto.
   - repeat constructor; auto.
   - apply NoDup_map_term_vi. tauto.
+  - destruct H as [Hnd [Hvs _]]. apply NoDup_vals_BAll; [exact Hnd|].
+    eapply Forall_impl; [|exact Hvs]. intros gv [Hn _]. exact Hn.
 Qed.
 
 Lemma wf_binding_vals_nonempty : forall b, wf_binding b -> vals b <> [].
 Proof.
-  intros [t | n | g vs]; simpl; intros H; try discriminate.
-  destruct vs; [tauto | discriminate].
+  intros [t | n | g vs | cat]; simpl; intros H; try discriminate.
+  - destruct vs; [tauto | discriminate].
+  - destruct H as [_ [Hvs Hne]]. destruct cat as [|[g vs] cat]; [contradiction|].
+    inversion Hvs as [| ? ? [_ Hne'] _]; subst. cbn [snd] in Hne'.
+    destruct vs; [contradiction|]. discriminate.
 Qed.
 
 (** ** Mappings and Lookup *)
@@ -473,14 +543,114 @@ Proof.
   - apply (expand_lookup_None m f x Hf). exact E.
 Qed.
 
+Lemma filter_map_none {A B : Type} (f : A -> option B) l :
+  (forall a, In a l -> f a = None) -> filter_map f l = [].
+Proof.
+  unfold filter_map. induction l as [|a l IH]; simpl; intros H; [reflexivity|].
+  rewrite (H a (or_introl eq_refl)). simpl. apply IH. auto.
+Qed.
+
+Lemma flat_map_nil_in {A B : Type} (f : A -> list B) l :
+  (forall a, In a l -> f a = []) -> flat_map f l = [].
+Proof.
+  induction l as [|a l IH]; simpl; intros H; [reflexivity|].
+  rewrite (H a (or_introl eq_refl)). simpl. apply IH. auto.
+Qed.
+
+(** ** Restricting a catalog *)
+
+Definition in_vals (b : Binding) (t : Term) : bool := inb Term_eq_dec t (vals b).
+
+(** The entries of [cat] restricted to the versions whose versioned IRI
+    satisfies [p]; entries left without version are dropped. *)
+Definition cat_restrict (p : Term -> bool) (cat : Catalog) : Catalog :=
+  filter_map (fun gv : IRI * VersionSet =>
+    match filter (fun v => p (TermIRI (vi v (fst gv)))) (snd gv) with
+    | [] => None
+    | vs' => Some (fst gv, vs')
+    end) cat.
+
+Lemma vals_cat_restrict : forall p cat,
+  flat_map entry_vals (cat_restrict p cat) = filter p (flat_map entry_vals cat).
+Proof.
+  intros p cat. induction cat as [|[g vs] cat IH]; [reflexivity|].
+  unfold cat_restrict in *. cbn [filter_map flat_map].
+  rewrite filter_app, <- IH. unfold entry_vals at 2. cbn [fst snd].
+  rewrite filter_map_swap. cbv beta.
+  destruct (filter (fun v => p (TermIRI (vi v g))) vs) as [|v vs'] eqn:E;
+    [reflexivity|].
+  cbn [flat_map entry_vals fst snd]. rewrite <- E. reflexivity.
+Qed.
+
+Lemma cat_restrict_fst_incl : forall p cat g,
+  In g (map fst (cat_restrict p cat)) -> In g (map fst cat).
+Proof.
+  intros p cat g Hg. apply in_map_iff in Hg. destruct Hg as [[g' vs'] [<- Hin]].
+  unfold cat_restrict in Hin. apply in_filter_map in Hin.
+  destruct Hin as [[g0 vs0] [Hin Heq]]. cbn [fst snd] in Heq.
+  destruct (filter _ vs0); [discriminate|]. injection Heq as <- _.
+  cbn [fst]. apply in_map_iff. exists (g0, vs0). auto.
+Qed.
+
+Lemma cat_restrict_In : forall p cat g vs',
+  In (g, vs') (cat_restrict p cat) ->
+  exists vs, In (g, vs) cat /\
+             vs' = filter (fun v => p (TermIRI (vi v g))) vs /\ vs' <> [].
+Proof.
+  intros p cat g vs' Hin. unfold cat_restrict in Hin. apply in_filter_map in Hin.
+  destruct Hin as [[g0 vs0] [Hin Heq]]. cbn [fst snd] in Heq.
+  destruct (filter (fun v => p (TermIRI (vi v g0))) vs0) eqn:E; [discriminate|].
+  injection Heq as <- <-. exists vs0. split; [exact Hin|].
+  split; [rewrite E; reflexivity | discriminate].
+Qed.
+
+(** Every entry kept by [cat_restrict p] has a version satisfying [p]. *)
+Lemma cat_restrict_witness : forall p cat g vs',
+  In (g, vs') (cat_restrict p cat) ->
+  exists v, In v vs' /\ p (TermIRI (vi v g)) = true.
+Proof.
+  intros p cat g vs' Hin. apply cat_restrict_In in Hin.
+  destruct Hin as [vs [_ [-> Hne]]].
+  destruct (filter (fun v => p (TermIRI (vi v g))) vs) as [|v vs''] eqn:E;
+    [contradiction|].
+  exists v. split; [left; reflexivity|].
+  assert (In v (filter (fun v => p (TermIRI (vi v g))) vs)) as Hv
+    by (rewrite E; left; reflexivity).
+  apply filter_In in Hv. tauto.
+Qed.
+
+Lemma cat_restrict_wf : forall p cat,
+  NoDup (map fst cat) ->
+  Forall (fun gv : IRI * VersionSet => NoDup (snd gv) /\ snd gv <> []) cat ->
+  NoDup (map fst (cat_restrict p cat)) /\
+  Forall (fun gv : IRI * VersionSet => NoDup (snd gv) /\ snd gv <> [])
+         (cat_restrict p cat).
+Proof.
+  intros p cat Hnd Hvs. split.
+  - induction cat as [|[g vs] cat IH]; [constructor|].
+    cbn [map fst] in Hnd. apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+    inversion Hvs as [| ? ? _ Hvs']; subst.
+    unfold cat_restrict, filter_map. cbn [flat_map fst snd].
+    destruct (filter (fun v => p (TermIRI (vi v g))) vs).
+    + cbn [app]. apply IH; assumption.
+    + cbn [app map fst]. constructor; [|apply IH; assumption].
+      intros Hg. apply Hnotin. eapply cat_restrict_fst_incl. exact Hg.
+  - apply Forall_forall. intros [g vs'] Hin.
+    apply cat_restrict_In in Hin. destruct Hin as [vs [Hin [-> Hne]]]. cbn [snd].
+    rewrite Forall_forall in Hvs. specialize (Hvs _ Hin). cbn [snd] in Hvs.
+    split; [apply NoDup_filter; tauto | exact Hne].
+Qed.
+
 (** ** Merging Bindings (Definitions 5.25 and 5.26, per variable) *)
 
 (** [merge_binding b1 b2] is the binding representing vals(b1) ∩ vals(b2),
     or [None] when the intersection is empty (incompatible bindings).
     On two ζ bindings this is Definition 5.26 (same named graph, version
     sets intersected); on two point-valued bindings it is the equality test
-    of Definition 5.25.  Mixed representations are handled through [vals]
-    so that the operation is total. *)
+    of Definition 5.25; on two ψ bindings the catalogs are intersected.
+    Mixed representations are handled through [vals] so that the
+    operation is total: ζ ⋈ ψ and ψ ⋈ ζ give the ζ binding restricted to
+    the versions in which the graph is present. *)
 Definition merge_binding (b1 b2 : Binding) : option Binding :=
   match point_val b1 with
   | Some t1 => if in_dec Term_eq_dec t1 (vals b2) then Some b1 else None
@@ -496,12 +666,25 @@ Definition merge_binding (b1 b2 : Binding) : option Binding :=
             | _ :: _ => Some (BCond g1 (version_set_intersection vs1 vs2))
             end
           else None
+      | BCond g1 vs1, BAll _ =>
+          match filter (fun v => in_vals b2 (TermIRI (vi v g1))) vs1 with
+          | [] => None
+          | vs' => Some (BCond g1 vs')
+          end
+      | BAll cat1, BCond g2 _ =>
+          match flat_map snd (cat_restrict (in_vals b2) cat1) with
+          | [] => None
+          | vs' => Some (BCond g2 vs')
+          end
+      | BAll cat1, BAll _ =>
+          match cat_restrict (in_vals b2) cat1 with
+          | [] => None
+          | cat' => Some (BAll cat')
+          end
       | _, _ => None
       end
     end
   end.
-
-Definition in_vals (b : Binding) (t : Term) : bool := inb Term_eq_dec t (vals b).
 
 Lemma filter_in_vals_singleton : forall (l : list Term) t,
   NoDup l -> In t l ->
@@ -534,42 +717,85 @@ Proof.
     + destruct (in_dec Term_eq_dec t2 (vals b1)) as [Hin|Hin]; [|discriminate].
       injection H as <-. rewrite (point_val_vals _ _ E2).
       symmetry. apply filter_in_vals_singleton; assumption.
-    + destruct b1 as [| | g1 vs1]; try discriminate.
-      destruct b2 as [| | g2 vs2]; try discriminate.
-      destruct (IRI_eq_dec g1 g2) as [<- | Hneq]; [|discriminate].
-      destruct (version_set_intersection vs1 vs2) eqn:Ei; [discriminate|].
-      injection H as <-. rewrite <- Ei. cbn [vals].
-      unfold version_set_intersection. rewrite filter_map_swap.
-      f_equal. apply filter_ext_In. intros w _.
-      apply eq_true_iff_eq. rewrite !inb_true_iff. rewrite in_map_term_vi.
-      tauto.
+    + destruct b1 as [| | g1 vs1 | cat1]; try discriminate;
+        destruct b2 as [| | g2 vs2 | cat2]; try discriminate.
+      * destruct (IRI_eq_dec g1 g2) as [<- | Hneq]; [|discriminate].
+        destruct (version_set_intersection vs1 vs2) eqn:Ei; [discriminate|].
+        injection H as <-. rewrite <- Ei. cbn [vals].
+        unfold version_set_intersection. rewrite filter_map_swap.
+        f_equal. apply filter_ext_In. intros w _.
+        apply eq_true_iff_eq. rewrite !inb_true_iff. rewrite in_map_term_vi.
+        tauto.
+      * (* ζ ⋈ ψ *)
+        destruct (filter (fun v => in_vals (BAll cat2) (TermIRI (vi v g1))) vs1)
+          as [|v0 vs0] eqn:Ef; [discriminate|].
+        injection H as <-. rewrite <- Ef. cbn [vals].
+        rewrite filter_map_swap. reflexivity.
+      * (* ψ ⋈ ζ *)
+        destruct (flat_map snd (cat_restrict (in_vals (BCond g2 vs2)) cat1))
+          as [|v0 vs0] eqn:Ef; [discriminate|].
+        injection H as <-. rewrite <- Ef. cbn [vals].
+        rewrite <- vals_cat_restrict.
+        rewrite map_flat_map. apply flat_map_ext_in. intros [g vs'] Hin.
+        unfold entry_vals. cbn [fst snd].
+        apply cat_restrict_In in Hin. destruct Hin as [vs [_ [-> _]]].
+        (* every surviving version has graph g2 *)
+        apply map_ext_in. intros v Hv. apply filter_In in Hv.
+        destruct Hv as [_ Hv]. unfold in_vals in Hv. cbn [vals] in Hv.
+        apply inb_true_iff in Hv. apply in_map_term_vi in Hv.
+        destruct Hv as [-> _]. reflexivity.
+      * (* ψ ⋈ ψ *)
+        destruct (cat_restrict (in_vals (BAll cat2)) cat1) as [|gv0 cat0] eqn:Ec;
+          [discriminate|].
+        injection H as <-. rewrite <- Ec. cbn [vals]. apply vals_cat_restrict.
 Qed.
 
 Lemma merge_binding_None : forall b1 b2,
   merge_binding b1 b2 = None ->
   filter (in_vals b2) (vals b1) = [].
 Proof.
-  intros b1 b2 H. unfold merge_binding in H. unfold in_vals.
+  intros b1 b2 H. unfold merge_binding in H.
   destruct (point_val b1) as [t1|] eqn:E1.
   - rewrite (point_val_vals _ _ E1).
     destruct (in_dec Term_eq_dec t1 (vals b2)) as [Hin|Hin]; [discriminate|].
-    simpl. apply (inb_false_iff Term_eq_dec) in Hin. rewrite Hin. reflexivity.
+    simpl. unfold in_vals. apply (inb_false_iff Term_eq_dec) in Hin.
+    rewrite Hin. reflexivity.
   - destruct (point_val b2) as [t2|] eqn:E2.
     + destruct (in_dec Term_eq_dec t2 (vals b1)) as [Hin|Hin]; [discriminate|].
-      rewrite (point_val_vals _ _ E2). apply filter_false_In.
+      unfold in_vals. rewrite (point_val_vals _ _ E2). apply filter_false_In.
       intros t Ht. apply inb_false_iff. intros [<- | []]. contradiction.
-    + destruct b1 as [| | g1 vs1]; try discriminate.
-      destruct b2 as [| | g2 vs2]; try discriminate.
-      cbn [vals]. rewrite filter_map_swap.
-      destruct (IRI_eq_dec g1 g2) as [<- | Hneq].
-      * destruct (version_set_intersection vs1 vs2) eqn:Ei; [|discriminate].
-        unfold version_set_intersection in Ei.
-        rewrite (filter_ext_In _ (fun v => inb Version_eq_dec v vs2));
-          [rewrite Ei; reflexivity|].
-        intros v _. apply eq_true_iff_eq. rewrite !inb_true_iff.
-        rewrite in_map_term_vi. tauto.
-      * rewrite filter_false_In; [reflexivity|]. intros v _.
-        apply inb_false_iff. rewrite in_map_term_vi. tauto.
+    + destruct b1 as [| | g1 vs1 | cat1]; try discriminate;
+        destruct b2 as [| | g2 vs2 | cat2]; try discriminate.
+      * cbn [vals]. rewrite filter_map_swap.
+        destruct (IRI_eq_dec g1 g2) as [<- | Hneq].
+        -- destruct (version_set_intersection vs1 vs2) eqn:Ei; [|discriminate].
+           unfold version_set_intersection in Ei.
+           rewrite (filter_ext_In _ (fun v => inb Version_eq_dec v vs2));
+             [rewrite Ei; reflexivity|].
+           intros v _. unfold in_vals. cbn [vals]. apply eq_true_iff_eq.
+           rewrite !inb_true_iff. rewrite in_map_term_vi. tauto.
+        -- rewrite filter_false_In; [reflexivity|]. intros v _.
+           unfold in_vals. cbn [vals]. apply inb_false_iff.
+           rewrite in_map_term_vi. tauto.
+      * (* ζ ⋈ ψ *)
+        destruct (filter (fun v => in_vals (BAll cat2) (TermIRI (vi v g1))) vs1)
+          as [|v0 vs0] eqn:Ef; [|discriminate].
+        cbn [vals]. rewrite filter_map_swap. cbv beta. rewrite Ef. reflexivity.
+      * (* ψ ⋈ ζ *)
+        destruct (flat_map snd (cat_restrict (in_vals (BCond g2 vs2)) cat1))
+          as [|v0 vs0] eqn:Ef; [|discriminate].
+        cbn [vals]. rewrite <- vals_cat_restrict.
+        apply flat_map_nil_in. intros [g vs'] Hin.
+        destruct (cat_restrict_witness _ _ _ _ Hin) as [v [Hv _]].
+        exfalso.
+        assert (In v (flat_map snd (cat_restrict (in_vals (BCond g2 vs2)) cat1)))
+          as Hv'.
+        { apply in_flat_map. exists (g, vs'). split; [exact Hin | exact Hv]. }
+        rewrite Ef in Hv'. contradiction.
+      * (* ψ ⋈ ψ *)
+        destruct (cat_restrict (in_vals (BAll cat2)) cat1) as [|gv0 cat0] eqn:Ec;
+          [|discriminate].
+        cbn [vals]. rewrite <- vals_cat_restrict, Ec. reflexivity.
 Qed.
 
 Lemma merge_binding_common : forall b1 b2 t,
@@ -594,14 +820,47 @@ Proof.
   - destruct (in_dec Term_eq_dec t1 (vals b2)); [congruence | discriminate].
   - destruct (point_val b2) as [t2|] eqn:E2.
     + destruct (in_dec Term_eq_dec t2 (vals b1)); [congruence | discriminate].
-    + destruct b1 as [| | g1 vs1]; try discriminate.
-      destruct b2 as [| | g2 vs2]; try discriminate.
-      destruct (IRI_eq_dec g1 g2) as [<- | Hneq]; [|discriminate].
-      destruct (version_set_intersection vs1 vs2) eqn:Ei; [discriminate|].
-      injection H as <-. rewrite <- Ei. cbn [wf_binding].
-      destruct H1 as [Hnd1 _]. split.
-      * apply NoDup_version_set_intersection. exact Hnd1.
-      * rewrite Ei. discriminate.
+    + destruct b1 as [| | g1 vs1 | cat1]; try discriminate;
+        destruct b2 as [| | g2 vs2 | cat2]; try discriminate.
+      * destruct (IRI_eq_dec g1 g2) as [<- | Hneq]; [|discriminate].
+        destruct (version_set_intersection vs1 vs2) eqn:Ei; [discriminate|].
+        injection H as <-. rewrite <- Ei. cbn [wf_binding].
+        destruct H1 as [Hnd1 _]. split.
+        -- apply NoDup_version_set_intersection. exact Hnd1.
+        -- rewrite Ei. discriminate.
+      * destruct (filter (fun v => in_vals (BAll cat2) (TermIRI (vi v g1))) vs1)
+          as [|v0 vs0] eqn:Ef; [discriminate|].
+        injection H as <-. rewrite <- Ef. cbn [wf_binding]. split.
+        -- apply NoDup_filter. apply H1.
+        -- rewrite Ef. discriminate.
+      * destruct (flat_map snd (cat_restrict (in_vals (BCond g2 vs2)) cat1))
+          as [|v0 vs0] eqn:Ef; [discriminate|].
+        injection H as <-. rewrite <- Ef. cbn [wf_binding]. split; [|rewrite Ef; discriminate].
+        (* at most one entry of the restricted catalog has graph g2 *)
+        destruct H1 as [Hnd1 [Hvs1 _]].
+        destruct (cat_restrict_wf (in_vals (BCond g2 vs2)) cat1 Hnd1 Hvs1)
+          as [Hnd' Hvs'].
+        assert (Hg : forall gv, In gv (cat_restrict (in_vals (BCond g2 vs2)) cat1) ->
+                                 fst gv = g2).
+        { intros [g vs'] Hin. destruct (cat_restrict_witness _ _ _ _ Hin) as [w [_ Hw]].
+          unfold in_vals in Hw. cbn [vals] in Hw. apply inb_true_iff in Hw.
+          apply in_map_term_vi in Hw. cbn [fst]. tauto. }
+        destruct (cat_restrict (in_vals (BCond g2 vs2)) cat1) as [|[g vs'] [|gv' cat']] eqn:Ec.
+        -- constructor.
+        -- cbn [flat_map snd]. rewrite app_nil_r. rewrite Forall_forall in Hvs'.
+           apply (Hvs' (g, vs')). left. reflexivity.
+        -- exfalso. cbn [map fst] in Hnd'. apply NoDup_cons_iff in Hnd'.
+           destruct Hnd' as [Hnotin _]. apply Hnotin.
+           assert (Hg1 : g = g2) by exact (Hg (g, vs') (or_introl eq_refl)).
+           assert (Hg2 : fst gv' = g2)
+             by exact (Hg gv' (or_intror (or_introl eq_refl))).
+           rewrite Hg1, <- Hg2. left. reflexivity.
+      * destruct (cat_restrict (in_vals (BAll cat2)) cat1) as [|gv0 cat0] eqn:Ec;
+          [discriminate|].
+        injection H as <-. rewrite <- Ec. cbn [wf_binding]. unfold wf_catalog.
+        destruct H1 as [Hnd1 [Hvs1 _]].
+        destruct (cat_restrict_wf (in_vals (BAll cat2)) cat1 Hnd1 Hvs1) as [Hnd' Hvs'].
+        split; [exact Hnd' | split; [exact Hvs' | rewrite Ec; discriminate]].
 Qed.
 
 Lemma merge_binding_point_l : forall b1 b2 b t,
@@ -1155,20 +1414,6 @@ Proof.
     + intros Hf. apply expand_merge_inv; auto.
     + intros [f1 [f2 [H1 [H2 [Hc ->]]]]].
       apply expand_merge_of_compat; auto.
-Qed.
-
-Lemma filter_map_none {A B : Type} (f : A -> option B) l :
-  (forall a, In a l -> f a = None) -> filter_map f l = [].
-Proof.
-  unfold filter_map. induction l as [|a l IH]; simpl; intros H; [reflexivity|].
-  rewrite (H a (or_introl eq_refl)). simpl. apply IH. auto.
-Qed.
-
-Lemma flat_map_nil_in {A B : Type} (f : A -> list B) l :
-  (forall a, In a l -> f a = []) -> flat_map f l = [].
-Proof.
-  induction l as [|a l IH]; simpl; intros H; [reflexivity|].
-  rewrite (H a (or_introl eq_refl)). simpl. apply IH. auto.
 Qed.
 
 (** Contrapositive of Lemma 6.4: incompatible condensed mappings have no

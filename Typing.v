@@ -19,6 +19,7 @@ Require Import ConVerG.Versioning.
 Require Import ConVerG.Representations.
 Require Import ConVerG.Environments.
 Require Import ConVerG.SolutionMappings.
+Require Import ConVerG.Expressions.
 Require Import ConVerG.Promotion.
 Require Import ConVerG.Difference.
 Import ListNotations.
@@ -153,11 +154,17 @@ Proof.
   - destruct (point_val b2) as [t2|] eqn:E2.
     + destruct (in_dec Term_eq_dec t2 (vals b1)); [|discriminate].
       injection H as <-. apply meet_repr_lb_r.
-    + destruct b1 as [| | g1 vs1]; try discriminate.
-      destruct b2 as [| | g2 vs2]; try discriminate.
-      destruct (IRI_eq_dec g1 g2); [|discriminate].
-      destruct (version_set_intersection vs1 vs2); [discriminate|].
-      injection H as <-. apply meet_repr_lb_l.
+    + destruct b1 as [| | g1 vs1 | cat1]; try discriminate;
+        destruct b2 as [| | g2 vs2 | cat2]; try discriminate.
+      * destruct (IRI_eq_dec g1 g2); [|discriminate].
+        destruct (version_set_intersection vs1 vs2); [discriminate|].
+        injection H as <-. apply meet_repr_lb_l.
+      * destruct (filter _ vs1); [discriminate|]. injection H as <-.
+        apply meet_repr_lb_l.
+      * destruct (flat_map _ _); [discriminate|]. injection H as <-.
+        apply meet_repr_lb_r.
+      * destruct (cat_restrict _ _); [discriminate|]. injection H as <-.
+        apply meet_repr_lb_l.
 Qed.
 
 (** The invariant for a condensed merge. *)
@@ -227,28 +234,59 @@ Qed.
 
 (** ** Requirements *)
 
-(** The requirements raising the variables of [xs] that are in the
-    domain of Γ to representation [r]. *)
+(** The requirements of [reqs] on the variables that are in the domain
+    of Γ (a variable outside the domain is never bound, see
+    [env_ok_keys_domain], so it needs no promotion). *)
+Definition needs_reqs (env : Environment) (reqs : list (Var * Representation))
+  : list (Var * Representation) :=
+  filter (fun xr => in_env_domain (fst xr) env) reqs.
+
+(** The requirements raising the variables of [xs] to representation
+    [r]. *)
 Definition needs (env : Environment) (xs : list Var) (r : Representation)
   : list (Var * Representation) :=
-  map (fun x => (x, r)) (filter (fun x => in_env_domain x env) xs).
+  needs_reqs env (map (fun x => (x, r)) xs).
+
+Lemma needs_reqs_keys : forall env reqs x,
+  In x (map fst (needs_reqs env reqs)) -> In x (env_domain env).
+Proof.
+  intros env reqs x Hx. unfold needs_reqs in Hx.
+  apply in_map_iff in Hx. destruct Hx as [[y r] [<- Hy]]. apply filter_In in Hy.
+  destruct Hy as [_ Hy]. cbn [fst] in Hy. unfold in_env_domain in Hy.
+  apply inb_true_iff in Hy. exact Hy.
+Qed.
+
+Lemma raise_needs_reqs_domain : forall env reqs x,
+  In x (env_domain (env_raise env (needs_reqs env reqs))) <-> In x (env_domain env).
+Proof.
+  intros env reqs x. rewrite env_raise_domain. split.
+  - intros [H | H]; [eapply needs_reqs_keys; eauto | exact H].
+  - intros H. right. exact H.
+Qed.
+
+(** After raising, every requirement on a bound variable is met. *)
+Lemma raise_needs_reqs_meets : forall env reqs x r r',
+  In (x, r) reqs ->
+  env_lookup x (env_raise env (needs_reqs env reqs)) = Some r' ->
+  r <=_r r'.
+Proof.
+  intros env reqs x r r' Hx Hl.
+  assert (Hdom : In x (env_domain env)).
+  { apply (raise_needs_reqs_domain env reqs). eapply env_lookup_in_domain; eauto. }
+  assert (Hin : In (x, r) (needs_reqs env reqs)).
+  { unfold needs_reqs. apply filter_In. split; [exact Hx|]. cbn [fst].
+    unfold in_env_domain. apply inb_true_iff. exact Hdom. }
+  destruct (env_raise_meets env _ x r Hin) as [r'' [Hl'' Hle]].
+  rewrite Hl in Hl''. injection Hl'' as <-. exact Hle.
+Qed.
 
 Lemma needs_keys : forall env xs r x,
   In x (map fst (needs env xs r)) -> In x (env_domain env).
-Proof.
-  intros env xs r x Hx. unfold needs in Hx. rewrite map_map in Hx. simpl in Hx.
-  apply in_map_iff in Hx. destruct Hx as [y [<- Hy]]. apply filter_In in Hy.
-  destruct Hy as [_ Hy]. unfold in_env_domain in Hy. apply inb_true_iff in Hy.
-  exact Hy.
-Qed.
+Proof. intros env xs r x. apply needs_reqs_keys. Qed.
 
 Lemma raise_needs_domain : forall env xs r x,
   In x (env_domain (env_raise env (needs env xs r))) <-> In x (env_domain env).
-Proof.
-  intros env xs r x. rewrite env_raise_domain. split.
-  - intros [H | H]; [eapply needs_keys; eauto | exact H].
-  - intros H. right. exact H.
-Qed.
+Proof. intros env xs r x. apply raise_needs_reqs_domain. Qed.
 
 (** After raising, every variable of [xs] that is bound is at least
     [r]. *)
@@ -257,15 +295,55 @@ Lemma raise_needs_meets : forall env xs r x r',
   env_lookup x (env_raise env (needs env xs r)) = Some r' ->
   r <=_r r'.
 Proof.
-  intros env xs r x r' Hx Hl.
-  assert (Hdom : In x (env_domain env)).
-  { apply (raise_needs_domain env xs r). eapply env_lookup_in_domain; eauto. }
-  assert (Hin : In (x, r) (needs env xs r)).
-  { unfold needs. apply in_map_iff. exists x. split; [reflexivity|].
-    apply filter_In. split; [exact Hx|]. unfold in_env_domain.
-    apply inb_true_iff. exact Hdom. }
-  destruct (env_raise_meets env _ x r Hin) as [r'' [Hl'' Hle]].
-  rewrite Hl in Hl''. injection Hl'' as <-. exact Hle.
+  intros env xs r x r' Hx Hl. eapply raise_needs_reqs_meets; [|exact Hl].
+  apply in_map_iff. exists x. auto.
+Qed.
+
+(** Γ meets the requirements [reqs]: every requirement on a variable typed
+    by Γ is below its representation in Γ. *)
+Definition env_meets (env : Environment) (reqs : list (Var * Representation))
+  : Prop :=
+  forall x r r', In (x, r) reqs -> env_lookup x env = Some r' -> r <=_r r'.
+
+Lemma raise_needs_reqs_env_meets : forall env reqs,
+  env_meets (env_raise env (needs_reqs env reqs)) reqs.
+Proof.
+  intros env reqs x r r' Hx Hl. eapply raise_needs_reqs_meets; eauto.
+Qed.
+
+(** The requirements of an expression are all point-valued (at least ι);
+    a mapping respecting an environment that meets them has point-valued
+    bindings on the variables of the expression (Lemma 6.3 applies). *)
+Lemma env_meets_point_on : forall env m r c,
+  env_ok env m -> Id <=_r r -> env_meets env (expr_reqs_at r c) ->
+  point_on (expr_vars c) m.
+Proof.
+  intros env m r c Hok Hr Hm x b Hx Hl.
+  destruct (Hok x b Hl) as [r' [Hr' Hle]].
+  rewrite <- (expr_reqs_at_keys r c) in Hx. apply in_map_iff in Hx.
+  destruct Hx as [[y r0] [Heq Hin]]. cbn [fst] in Heq. subst y.
+  pose proof (expr_reqs_at_point r c x r0 Hr Hin) as Hr0.
+  pose proof (Hm x r0 r' Hin Hr') as Hle'.
+  apply point_val_repr. apply Id_leq_point.
+  eapply leq_repr_trans; [exact Hr0|]. eapply leq_repr_trans; [exact Hle' | exact Hle].
+Qed.
+
+(** Variables required at ι (grouping variables) are point-valued. *)
+Lemma env_meets_ids_point_on : forall env m ks,
+  env_ok env m -> env_meets env (map (fun x => (x, Id)) ks) -> point_on ks m.
+Proof.
+  intros env m ks Hok Hm x b Hx Hl. destruct (Hok x b Hl) as [r [Hr Hle]].
+  apply point_val_repr. apply Id_leq_point.
+  eapply leq_repr_trans; [|exact Hle]. apply (Hm x Id r); [|exact Hr].
+  apply in_map_iff. exists x. auto.
+Qed.
+
+Lemma env_meets_incl : forall env reqs1 reqs2,
+  (forall xr, In xr reqs1 -> In xr reqs2) ->
+  env_meets env reqs2 -> env_meets env reqs1.
+Proof.
+  intros env reqs1 reqs2 Hincl Hm x r r' Hx Hr. apply (Hm x r r'); [|exact Hr].
+  apply Hincl. exact Hx.
 Qed.
 
 (** Consequence for the evaluation: variables raised to ν are

@@ -11,12 +11,13 @@ From Stdlib Require Import List Bool.
 Require Import ConVerG.RDF.
 Require Import ConVerG.Representations.
 Require Import ConVerG.Expressions.
+Require Import ConVerG.Aggregation.
 Require Import ConVerG.FlatAlgebra.
 Import ListNotations.
 
 Inductive CondExpr : Type :=
-  | QuadPatternC : PatTerm -> PatTerm -> PatTerm -> Var -> CondExpr
-      (** QP_C(s, p, o, ?g) *)
+  | QuadPatternC : PatTerm -> PatTerm -> PatTerm -> PatTerm -> CondExpr
+      (** QP_C(s, p, o, g) *)
   | JoinC : CondExpr -> CondExpr -> CondExpr
       (** ⋈_C(e1, e2) *)
   | FilterC : SparqlExpr -> CondExpr -> CondExpr
@@ -31,5 +32,9 @@ Inductive CondExpr : Type :=
       (** ρ_C(?x, expr, e) *)
   | ProjectionC : CondExpr -> list Var -> CondExpr
       (** Π_C(e, vars) *)
-  | TransformReprC : list (Var * Representation) -> CondExpr -> CondExpr.
+  | GroupAggC : list Var -> list Aggregate -> CondExpr -> CondExpr
+      (** AggJ_C ∘ Agg_C ∘ Gr_C: GROUP BY with aggregates, count-views *)
+  | TransformReprC : list (Var * Representation) -> CondExpr -> CondExpr
       (** Υ_reqs(e): promote the variables of [reqs] *)
+  | GraphsC : Var -> CondExpr.
+      (** GRAPH ?x { }: ?x bound to the marker • (ψ) *)

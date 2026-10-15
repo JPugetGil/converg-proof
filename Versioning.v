@@ -85,6 +85,37 @@ Definition version_set_card (vs : VersionSet) : nat := length vs.
 (** A well-formed version set has no duplicates. *)
 Definition wf_version_set (vs : VersionSet) : Prop := NoDup vs.
 
+(** ** Graph Catalogs *)
+
+(** A catalog lists named graphs with the versions in which they are
+    present.  The catalog of an archive is the value denoted by the
+    universal graph marker [•] of the ψ representation (Definition 5.21,
+    read as in the proof of Lemma 6.1: only the (graph, version) pairs
+    present in the archive), and [τ_{ψ⇝ζ}(•)] enumerates its entries
+    (Definition 5.32). *)
+Definition Catalog := list (IRI * VersionSet).
+
+(** A well-formed catalog is a non-empty function from named graphs to
+    non-empty, duplicate-free version sets. *)
+Definition wf_catalog (cat : Catalog) : Prop :=
+  NoDup (map fst cat) /\
+  Forall (fun gv : IRI * VersionSet => NoDup (snd gv) /\ snd gv <> []) cat /\
+  cat <> [].
+
+(** The (graph, version) pairs of a catalog. *)
+Definition catalog_pairs (cat : Catalog) : list (IRI * Version) :=
+  flat_map (fun gv => map (fun v => (fst gv, v)) (snd gv)) cat.
+
+Lemma in_catalog_pairs : forall cat g v,
+  In (g, v) (catalog_pairs cat) <-> exists vs, In (g, vs) cat /\ In v vs.
+Proof.
+  intros cat g v. unfold catalog_pairs. rewrite in_flat_map. split.
+  - intros [[g' vs] [Hin Hv]]. apply in_map_iff in Hv.
+    destruct Hv as [v' [Heq Hv']]. injection Heq as <- <-. eauto.
+  - intros [vs [Hin Hv]]. exists (g, vs). split; [exact Hin|].
+    apply in_map_iff. exists v. auto.
+Qed.
+
 (** ** Lemmas *)
 
 Lemma version_set_intersection_In vs1 vs2 v :

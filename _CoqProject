@@ -13,6 +13,7 @@ Environments.v
 # Solution mappings and their operations
 SolutionMappings.v
 Expressions.v
+Aggregation.v
 Promotion.v
 Difference.v
 Typing.v
@@ -27,3 +28,6 @@ TypeSystem.v
 
 # Main theorem
 Equivalence.v
+
+# Optimal representation (Section 5.4)
+Optimality.v

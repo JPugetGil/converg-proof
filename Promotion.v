@@ -8,8 +8,11 @@
     Promotion is defined per variable and per binding: a ζ binding
     (g, V) promoted to ι or ν becomes one point-valued binding per
     version v ∈ V (the versioned IRI VI(v, g)); an ι binding promoted to
-    ν is decoded through the dictionary.  Promotion never lowers a
-    representation.
+    ν is decoded through the dictionary; the marker [•] (ψ) promoted to
+    ζ becomes one ζ binding per entry of its catalog (τ_{ψ⇝ζ},
+    Definition 5.32), and promoted to ι or ν the composition of the
+    elementary translations (end of Definition 5.47).  Promotion never
+    lowers a representation.
 *)
 
 From Stdlib Require Import List Permutation Bool Lia.
@@ -30,26 +33,53 @@ Definition promote_binding (r : Representation) (b : Binding) : list Binding :=
     | BVal t => [BVal t]
     | BId n => [BVal (id_to_val n)]
     | BCond g vs => map (fun v => BVal (TermIRI (vi v g))) vs
+    | BAll cat =>
+        flat_map (fun gv => map (fun v => BVal (TermIRI (vi v (fst gv)))) (snd gv)) cat
     end
   | Id =>
     match b with
     | BVal t => [BVal t]
     | BId n => [BId n]
     | BCond g vs => map (fun v => BId (val_to_id (TermIRI (vi v g)))) vs
+    | BAll cat =>
+        flat_map (fun gv => map (fun v => BId (val_to_id (TermIRI (vi v (fst gv)))))
+                                (snd gv)) cat
     end
-  | Condensed | UnboundGraph => [b]
+  | Condensed =>
+    match b with
+    | BAll cat => map (fun gv => BCond (fst gv) (snd gv)) cat
+    | _ => [b]
+    end
+  | UnboundGraph => [b]
   end.
+
+Lemma flat_map_vals_map_BVal : forall (f : Version -> Term) vs,
+  flat_map vals (map (fun v => BVal (f v)) vs) = map f vs.
+Proof.
+  intros f vs. induction vs as [|v vs IH]; simpl; [reflexivity|]. rewrite IH. reflexivity.
+Qed.
+
+Lemma flat_map_vals_map_BId : forall (f : Version -> Term) vs,
+  flat_map vals (map (fun v => BId (val_to_id (f v))) vs) = map f vs.
+Proof.
+  intros f vs. induction vs as [|v vs IH]; simpl; [reflexivity|].
+  rewrite IH, id_to_val_to_id. reflexivity.
+Qed.
 
 (** The promoted bindings represent, together, exactly the values of the
     original binding (Lemma 6.1, binding level). *)
 Lemma vals_promote_binding : forall r b,
   flat_map vals (promote_binding r b) = vals b.
 Proof.
-  intros r b. destruct r, b as [t | n | g vs]; simpl; try reflexivity;
+  intros r b. destruct r, b as [t | n | g vs | cat]; simpl; try reflexivity;
     try apply app_nil_r.
-  - induction vs as [|v vs IH]; simpl; [reflexivity|]. rewrite IH. reflexivity.
-  - induction vs as [|v vs IH]; simpl; [reflexivity|].
-    rewrite IH, id_to_val_to_id. reflexivity.
+  - apply flat_map_vals_map_BVal.
+  - rewrite flat_map_flat_map. apply flat_map_ext. intros [g vs].
+    apply flat_map_vals_map_BVal.
+  - apply flat_map_vals_map_BId.
+  - rewrite flat_map_flat_map. apply flat_map_ext. intros [g vs].
+    apply flat_map_vals_map_BId.
+  - rewrite flat_map_map_comp. reflexivity.
 Qed.
 
 Lemma promote_binding_point : forall r b b',
@@ -57,13 +87,15 @@ Lemma promote_binding_point : forall r b b',
 Proof.
   intros r b b' Hr Hin. destruct r; try discriminate; destruct b; simpl in Hin;
     try (destruct Hin as [<- | []]; simpl; discriminate);
+    try (apply in_map_iff in Hin; destruct Hin as [w [<- _]]; simpl; discriminate);
+    apply in_flat_map in Hin; destruct Hin as [gv [_ Hin]];
     apply in_map_iff in Hin; destruct Hin as [w [<- _]]; simpl; discriminate.
 Qed.
 
 Lemma promote_binding_preserves_point : forall r b b',
   point_val b <> None -> In b' (promote_binding r b) -> point_val b' <> None.
 Proof.
-  intros r b b' Hb Hin. destruct b; [| | exfalso; apply Hb; reflexivity].
+  intros r b b' Hb Hin. destruct b; try (exfalso; apply Hb; reflexivity).
   all: destruct r; simpl in Hin; destruct Hin as [<- | []]; simpl; discriminate.
 Qed.
 
@@ -72,8 +104,14 @@ Lemma promote_binding_wf : forall r b b',
 Proof.
   intros r b b' Hwf Hin. destruct r, b; simpl in Hin;
     try (destruct Hin as [<- | []]; simpl; exact I);
-    try (apply in_map_iff in Hin; destruct Hin as [w [<- _]]; simpl; exact I).
-  all: destruct Hin as [<- | []]; exact Hwf.
+    try (apply in_map_iff in Hin; destruct Hin as [w [<- _]]; simpl; exact I);
+    try (apply in_flat_map in Hin; destruct Hin as [gv [_ Hin]];
+         apply in_map_iff in Hin; destruct Hin as [w [<- _]]; simpl; exact I);
+    try (destruct Hin as [<- | []]; exact Hwf).
+  (* ψ promoted to ζ: one entry of the catalog *)
+  apply in_map_iff in Hin. destruct Hin as [[g vs] [<- Hgv]]. simpl.
+  destruct Hwf as [_ [Hvs _]]. rewrite Forall_forall in Hvs.
+  apply (Hvs (g, vs) Hgv).
 Qed.
 
 (** Promotion never lowers a representation, and reaches the requested
@@ -84,6 +122,9 @@ Lemma promote_binding_repr : forall r b b',
 Proof.
   intros r b b' Hin. destruct r, b; simpl in Hin;
     try (destruct Hin as [<- | []]; simpl; unfold leq_repr; simpl; split; lia);
+    try (apply in_map_iff in Hin; destruct Hin as [w [<- _]]; simpl;
+         unfold leq_repr; simpl; split; lia);
+    apply in_flat_map in Hin; destruct Hin as [gv [_ Hin]];
     apply in_map_iff in Hin; destruct Hin as [w [<- _]]; simpl;
     unfold leq_repr; simpl; split; lia.
 Qed.

@@ -25,7 +25,8 @@ Import ListNotations.
 
 (** The binding representing { t ∈ vals b | p t }, or [None] when this set
     is empty.  Point-valued bindings stay point-valued; ζ bindings keep
-    their named graph. *)
+    their named graph; ψ bindings keep their representation, with a
+    restricted catalog. *)
 Definition binding_filter (p : Term -> bool) (b : Binding) : option Binding :=
   match b with
   | BVal t => if p t then Some (BVal t) else None
@@ -35,49 +36,65 @@ Definition binding_filter (p : Term -> bool) (b : Binding) : option Binding :=
       | [] => None
       | _ :: _ => Some (BCond g (filter (fun v => p (TermIRI (vi v g))) vs))
       end
+  | BAll cat =>
+      match cat_restrict p cat with
+      | [] => None
+      | _ :: _ => Some (BAll (cat_restrict p cat))
+      end
   end.
 
 Lemma vals_binding_filter : forall p b b',
   binding_filter p b = Some b' -> vals b' = filter p (vals b).
 Proof.
-  intros p b b' H. destruct b as [t | n | g vs]; simpl in *.
+  intros p b b' H. destruct b as [t | n | g vs | cat]; simpl in *.
   - destruct (p t) eqn:E; [|discriminate]. injection H as <-. reflexivity.
   - destruct (p (id_to_val n)) eqn:E; [|discriminate]. injection H as <-.
     reflexivity.
   - destruct (filter (fun v => p (TermIRI (vi v g))) vs) eqn:E; [discriminate|].
     injection H as <-. rewrite <- E. cbn [vals]. rewrite filter_map_swap.
     reflexivity.
+  - destruct (cat_restrict p cat) eqn:E; [discriminate|].
+    injection H as <-. rewrite <- E. cbn [vals]. apply vals_cat_restrict.
 Qed.
 
 Lemma binding_filter_None : forall p b,
   binding_filter p b = None -> filter p (vals b) = [].
 Proof.
-  intros p b H. destruct b as [t | n | g vs]; simpl in *.
+  intros p b H. destruct b as [t | n | g vs | cat]; simpl in *.
   - destruct (p t) eqn:E; [discriminate|]. reflexivity.
   - destruct (p (id_to_val n)) eqn:E; [discriminate|]. reflexivity.
   - destruct (filter (fun v => p (TermIRI (vi v g))) vs) eqn:E; [|discriminate].
     rewrite filter_map_swap. cbv beta. rewrite E. reflexivity.
+  - destruct (cat_restrict p cat) eqn:E; [|discriminate].
+    rewrite <- vals_cat_restrict, E. reflexivity.
 Qed.
 
 Lemma binding_filter_wf : forall p b b',
   wf_binding b -> binding_filter p b = Some b' -> wf_binding b'.
 Proof.
-  intros p b b' Hwf H. destruct b as [t | n | g vs]; simpl in *.
+  intros p b b' Hwf H. destruct b as [t | n | g vs | cat]; simpl in *.
   - destruct (p t); [injection H as <-; exact I | discriminate].
   - destruct (p (id_to_val n)); [injection H as <-; exact I | discriminate].
   - destruct (filter (fun v => p (TermIRI (vi v g))) vs) eqn:E; [discriminate|].
     injection H as <-. rewrite <- E. simpl. split.
     + apply NoDup_filter. tauto.
     + rewrite E. discriminate.
+  - destruct (cat_restrict p cat) eqn:E; [discriminate|].
+    injection H as <-. rewrite <- E. simpl. unfold wf_catalog.
+    destruct Hwf as [Hnd [Hvs _]].
+    destruct (cat_restrict_wf p cat Hnd Hvs) as [Hnd' Hvs'].
+    split; [exact Hnd' | split; [exact Hvs' | rewrite E; discriminate]].
 Qed.
 
 Lemma binding_filter_repr : forall p b b',
   binding_filter p b = Some b' -> binding_repr b' = binding_repr b.
 Proof.
-  intros p b b' H. destruct b as [t | n | g vs]; simpl in *.
+  intros p b b' H. destruct b as [t | n | g vs | cat]; simpl in *.
   - destruct (p t); [injection H as <-; reflexivity | discriminate].
   - destruct (p (id_to_val n)); [injection H as <-; reflexivity | discriminate].
   - destruct (filter (fun v => p (TermIRI (vi v g))) vs); [discriminate|].
+    injection H as <-. reflexivity.
+  - destruct (cat_restrict p cat); [discriminate|].
     injection H as <-. reflexivity.
 Qed.
 
